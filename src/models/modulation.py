@@ -73,7 +73,11 @@ class PerturbationModulation(nn.Module):
         # The same number sets where the turn-on term starts AND how large a gradient can
         # reach it, since d/dv softplus(v) = sigmoid(v). src/config.py carries the
         # trade-off and the measurements.
-        nn.init.constant_(self.to_v.bias, float(cfg["turn_on_init"]))
+        # .get, not [], and -10.0 is not a guess: it is the value hardcoded here before
+        # this became a setting, so a run trained before the key existed rebuilds as the
+        # model it actually was. A checkpoint cannot carry a key that did not exist when
+        # it was written, and v2 lost a day to exactly this with its whitener buffer.
+        nn.init.constant_(self.to_v.bias, float(cfg.get("turn_on_init", -10.0)))
 
         # FROM THE DATA, like v2's intercept: each gene's observed detection rate. The
         # alternative, a constant, makes q wrong for every gene at once in a quantity that
