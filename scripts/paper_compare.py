@@ -70,7 +70,7 @@ TABLES = {
  ("scPKR (v2)",
                 [2.2804, 0.00530, 0.03303, 0.8021, 0.8368, 0.8571, MISSING, MISSING]),
  ("scPKR2 (ours)",
-                [1.4900, MISSING, MISSING, MISSING, MISSING, MISSING, MISSING, MISSING]),
+                [1.4900, 0.00267, 0.01845, 0.9298, 0.9335, 0.8980, MISSING, MISSING]),
 ],
 }
 
