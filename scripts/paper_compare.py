@@ -5,11 +5,15 @@ not reproducible from this repository - nothing here can recompute them. They li
 source so that a table can be redrawn without the screenshots, which is how they were
 lost once already.
 
-scPKR's row is measured: scripts/paper_table.py over the runs in results/final, the
-sample gate with the gamma realisation at 4,096 cells, so that the L2 and the five
-cell-eval columns beside it come from one prediction rather than two. The mean the
-model states - the soft gate, which is what an L2 between means asks for - is carried
-separately in SOFT_L2 and is the lower of the two everywhere.
+scPKR's row is v2's, measured and frozen at 20a24c3: scripts/paper_table.py over its
+runs, the sample gate with the gamma realisation at 4,096 cells, so its L2 and the
+five cell-eval columns beside it come from one prediction rather than two. The mean
+that model states - the soft gate, which is what an L2 between means asks for - is
+carried separately in SOFT_L2 and is the lower of the two everywhere.
+
+IT IS A COMPARISON ROW HERE, NOT AN "ours". This repository's model has to beat it,
+and it is listed beside the published models for that reason. A row for this
+repository is added once there is something measured to put in it.
 """
 import argparse
 
@@ -31,7 +35,7 @@ TABLES = {
  ("STATE",     [17.3330, 0.30059, 0.24705, 0.5288, -0.0108,  0.5135, -0.0069,  0.2515]),
  ("scDFM",      [1.7043, 0.00315, 0.02155, 0.5705,  0.8853,  0.9737,  0.8468,  0.9260]),
  ("CellFlow",   [1.7064, 0.00392, 0.02207, 0.5503,  0.8678,  0.9321,  0.8395,  0.8988]),
- ("scPKR (ours)",
+ ("scPKR (v2)",
                 [1.6515, 0.00395, 0.02239, 0.5210,  0.8740,  0.9419, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Single": [
@@ -43,7 +47,7 @@ TABLES = {
  ("STATE",     [18.2543, 0.3333, 0.2693,  0.6116, 0.0004, 0.5236,  0.0154,  0.2386]),
  ("scDFM",      [1.6186, 0.0030, 0.0190,  0.6957, 0.7127, 0.8914,  0.6659,  0.8116]),
  ("CellFlow",   [1.6758, 0.0035, 0.0191,  0.2860, 0.7109, 0.8072,  0.6138,  0.6753]),
- ("scPKR (ours)",
+ ("scPKR (v2)",
                 [1.4610, 0.00308, 0.01663, 0.5190, 0.7325, 0.8984, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Double": [
@@ -55,7 +59,7 @@ TABLES = {
  ("STATE",     [18.4458, 0.3404, 0.2733,  0.4071, 0.0061, 0.5289, -0.0023,  0.2580]),
  ("scDFM",      [2.0309, 0.0047, 0.0235,  0.5676, 0.8357, 0.9189,  0.7769,  0.8688]),
  ("CellFlow",   [2.1042, 0.0049, 0.0236,  0.5074, 0.8095, 0.8622,  0.6780,  0.7155]),
- ("scPKR (ours)",
+ ("scPKR (v2)",
                 [2.0458, 0.00576, 0.02580, 0.5130, 0.8215, 0.8592, MISSING, MISSING]),
 ],
 "Table 3  ComboSciPlex": [
@@ -63,7 +67,7 @@ TABLES = {
  ("scGPT",      [1.6934, 0.0031, 0.0251, -0.1261, 0.8322, 0.8571, MISSING, MISSING]),
  ("CPA",        [1.6592, 0.0029, 0.0240,  0.7906, 0.8150, 0.8980, MISSING, MISSING]),
  ("scDFM",      [1.6567, 0.0028, 0.0220,  0.8289, 0.8933, 0.8776, MISSING, MISSING]),
- ("scPKR (ours)",
+ ("scPKR (v2)",
                 [2.2804, 0.00530, 0.03303, 0.8021, 0.8368, 0.8571, MISSING, MISSING]),
 ],
 }

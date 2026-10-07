@@ -242,7 +242,7 @@ def main() -> None:
     margin = 20 * mm
     document = SimpleDocTemplate(out_path, pagesize=A4, leftMargin=margin,
                                  rightMargin=margin, topMargin=18 * mm,
-                                 bottomMargin=18 * mm, title="scPKR", author="")
+                                 bottomMargin=18 * mm, title="scPKR2", author="")
     width = A4[0] - 2 * margin
     document.build(convert(source, width), onFirstPage=footer, onLaterPages=footer)
     print(f"-> {out_path}")
