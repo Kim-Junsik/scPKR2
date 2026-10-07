@@ -56,6 +56,30 @@ class PerturbationModulation(nn.Module):
         self.embedding = nn.Embedding(int(n_perturbations), int(cfg["embed_dim"]))
         nn.init.normal_(self.embedding.weight, std=0.02)
 
+        # A GENE-SPACE TERM PER PERTURBATION, summed over the set exactly as the embedding
+        # is. Without it every perturbation's effect has to pass through embed_dim
+        # numbers and a shared decoder, while ridge gives each one 5,000 free parameters
+        # and solves for them exactly. That bottleneck is what docs/DESIGN.md 2.3 said
+        # this design could lose on, and the first readings say it does: against ridge,
+        # -0.0518 on norman fold 0 but +0.0524 on combosciplex, which has seven
+        # conditions and thirteen of seventeen perturbations never seen alone.
+        #
+        # It is NOT ridge coming back. It is learned by gradient descent rather than
+        # solved, it sits inside exp() so it cannot drive a cell negative, and U h adds
+        # the cell-conditional part ridge has no way to express. What it restores is the
+        # capacity, not the closed form.
+        #
+        # Zero-initialised, so the untrained model is unchanged and every claim in
+        # verify_premise still holds.
+        # .get with False, so a checkpoint written before this existed rebuilds as the
+        # model it was. Reading it as cfg["..."] would raise, and defaulting it to True
+        # would add two parameters load_state_dict cannot find - the same failure the
+        # whitener buffer caused in v2 and turn_on_init caused here an hour ago.
+        self.direct = bool(cfg.get("direct_gene_term", False))
+        if self.direct:
+            self.u_direct = nn.Parameter(torch.zeros(int(n_perturbations), n_genes))
+            self.v_direct = nn.Parameter(torch.zeros(int(n_perturbations), n_genes))
+
         self.trunk = nn.Sequential(
             nn.Linear(observable_dim + int(cfg["embed_dim"]), width), nn.SiLU(),
             nn.Linear(width, width), nn.SiLU())
@@ -117,11 +141,17 @@ class PerturbationModulation(nn.Module):
         """`x` is the control cell [B, G]; `phi` is its observable coordinates [B, K]."""
         e = self.embed(perturbations).expand(phi.shape[0], -1)
         h = self.trunk(torch.cat([phi, e], dim=1))
+        u_add = v_add = 0.0
+        if self.direct and perturbations:
+            index = torch.as_tensor(sorted(perturbations), dtype=torch.long,
+                                    device=self.u_direct.device)
+            u_add = self.u_direct[index].sum(dim=0)
+            v_add = self.v_direct[index].sum(dim=0)
         # Bounded, because exp is not. At 3.0 the factor runs over [0.05, 20], which
         # covers anything log1p expression does; unbounded, one bad step puts exp(u) at
         # 1e9 and the run is lost rather than merely wrong.
-        u = self.to_u(h).clamp(-self.log_factor_max, self.log_factor_max)
-        mean = x * torch.exp(u) + torch.nn.functional.softplus(self.to_v(h))
+        u = (self.to_u(h) + u_add).clamp(-self.log_factor_max, self.log_factor_max)
+        mean = x * torch.exp(u) + torch.nn.functional.softplus(self.to_v(h) + v_add)
         q = torch.sigmoid(self.to_q(h)).clamp(1e-3, 1.0 - 1e-6)
         return {"mean": mean, "q": q, "magnitude": mean / q,
                 "log_scale": self.log_scale.expand_as(mean).clamp(-6.0, 2.0),

@@ -238,6 +238,13 @@ DEFAULTS: dict[str, Any] = {
         # Lower keeps "an untrained model is exactly the control" true; higher lets the
         # term learn at all. Swept rather than argued - see the sweep in docs/FINDINGS.md.
         "turn_on_init": -10.0,
+        # One gene-space vector per perturbation, inside exp() and softplus(), summed
+        # over the set. It restores the CAPACITY ridge has - 5,000 free numbers per
+        # perturbation against embed_dim through a shared decoder - without restoring the
+        # closed form: it is learned, it cannot drive a cell negative, and the decoder
+        # still modulates it per cell. Zero-initialised, so nothing about the untrained
+        # model changes.
+        "direct_gene_term": True,
         # Stage 2 - the Koopman operators and their anticommutator. Off while the decoder
         # is being established, because it already sees the summed embedding and can
         # represent an interaction: running both lets two terms explain one quantity,
