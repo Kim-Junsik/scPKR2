@@ -70,7 +70,7 @@ TABLES = {
  ("scPKR (v2)",
                 [2.2804, 0.00530, 0.03303, 0.8021, 0.8368, 0.8571, MISSING, MISSING]),
  ("scPKR2 (ours)",
-                [1.4900, 0.00267, 0.01845, 0.9298, 0.9335, 0.8980, MISSING, MISSING]),
+                [1.5129, 0.00267, 0.01845, 0.9298, 0.9335, 0.8980, MISSING, MISSING]),
 ],
 }
 
@@ -82,6 +82,11 @@ TABLES = {
 # 4,096 cells - the same protocol the ridge row is quoted under. ComboSciPlex has one
 # fold, so its number is final rather than a per-fold reading. The five cell-eval columns
 # are blank until run_celleval.py has produced them.
+# ONE PREDICTION FOR ALL SIX COLUMNS. The row is the sample gate, so its L2 and its five
+# cell-eval columns come from the same cells. v2 could not do that: its sampled L2 was
+# 0.697 above the mean it stated on this block, so a table had to pick a gate per column
+# and explain the gap. Here the two agree to 0.023 - soft 1.4900 against sample 1.5129 -
+# and the choice stops mattering.
 OURS = {"Table 3  ComboSciPlex": (1.4900, 1.8577)}
 
 SOFT_L2 = {"Table 1  Norman additive split": 1.5608,
@@ -131,8 +136,10 @@ def render(name: str, rows: list, markdown: bool, digits: int) -> str:
                 f"{soft:.4f}."]
     ours = OURS.get(name)
     if ours is not None:
-        out += [f"scPKR2, soft gate, 4,096 cells, same protocol as the ridge "
-                f"row: {ours[0]:.4f} against ridge {ours[1]:.4f}."]
+        out += [f"scPKR2's row is the SAMPLE gate, so all six columns come from one "
+                f"prediction. Its soft-gate L2, the same protocol the ridge row uses, "
+                f"is {ours[0]:.4f} against ridge {ours[1]:.4f} - 0.023 apart, where v2 "
+                f"was 0.697 apart on this block."]
     return "\n".join(out)
 
 
