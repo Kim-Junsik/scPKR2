@@ -238,13 +238,22 @@ DEFAULTS: dict[str, Any] = {
         # Lower keeps "an untrained model is exactly the control" true; higher lets the
         # term learn at all. Swept rather than argued - see the sweep in docs/FINDINGS.md.
         "turn_on_init": -10.0,
-        # One gene-space vector per perturbation, inside exp() and softplus(), summed
-        # over the set. It restores the CAPACITY ridge has - 5,000 free numbers per
-        # perturbation against embed_dim through a shared decoder - without restoring the
-        # closed form: it is learned, it cannot drive a cell negative, and the decoder
-        # still modulates it per cell. Zero-initialised, so nothing about the untrained
-        # model changes.
-        "direct_gene_term": True,
+        # One gene-space vector per perturbation, inside exp() and softplus(). It gives
+        # each perturbation the 5,000 free numbers ridge has, instead of embed_dim
+        # through a shared decoder.
+        #
+        # OFF, BECAUSE IT WAS MEASURED AND IT OVERFITS. combosciplex validation, 250
+        # epochs, against ridge's 2.2305:
+        #
+        #                 training loss   test L2    vs ridge
+        #   off               0.769        1.6759     -0.5547
+        #   on                0.371        2.4939     +0.2634
+        #
+        # It fits the training conditions twice as well and generalises far worse: 17
+        # perturbations x 5,000 genes x 2 terms is 170,000 free parameters against
+        # nineteen training conditions. The bottleneck this was meant to remove IS the
+        # regularisation, and capacity was not what the model was short of.
+        "direct_gene_term": False,
         # Stage 2 - the Koopman operators and their anticommutator. Off while the decoder
         # is being established, because it already sees the summed embedding and can
         # represent an interaction: running both lets two terms explain one quantity,
