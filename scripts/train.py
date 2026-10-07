@@ -67,29 +67,35 @@ def verify_premise(model, data, stats, conditions: list[str], log,
       realisation can reproduce - flooring them cost 0.80 of L2 there. A single
       negative here means the parameterisation is not doing what it is for.
 
-      THE UNTRAINED MODEL IS THE CONTROL. The output maps start at zero, so every output
-      is its bias: u = 0 and softplus(-10) = 4.5e-5, hence mu = x. This is the
-      STARTING POINT, not a baseline - Control scores 3.9937, and the run has to climb
-      from there to beat ridge's 1.6690. Asserting it means the run begins somewhere
-      nameable rather than at a random gene-space field.
+      THE UNTRAINED MODEL IS THE CONTROL PLUS EXACTLY softplus(turn_on_init). The output
+      maps start at zero, so every output is its bias: u = 0, and the turn-on term is the
+      same constant on every gene of every cell. That constant is a CHOSEN quantity, not
+      a tolerance - asserting the deviation equals it is a stronger check than asserting
+      the deviation is small, and it is what lets turn_on_init be swept at all.
+
+      The starting point is Control, 3.9937, and the run has to climb from there to beat
+      ridge's 1.6690. Asserting it means the run begins somewhere nameable rather than at
+      a random gene-space field.
 
       ORDER DOES NOT MATTER. e_S is a sum, so A+B and B+A are the same prediction. A
       simultaneous perturbation has no order and no training signal would impose this.
     """
     device = model.modulation.to_u.bias.device
     control = torch.as_tensor(data.cells(data.control_condition), device=device)[:256]
+    offset = float(torch.nn.functional.softplus(
+        torch.tensor(float(model.modulation.to_v.bias[0]))))
     worst_negative, worst_control, worst_order = 0.0, 0.0, 0.0
     for condition in conditions[:8]:
         perturbations = [data.pert_index[g] for g in data.naming.genes(condition)]
         mu = model(control, perturbations)["mean"]
         worst_negative = min(worst_negative, float(mu.min()))
-        worst_control = max(worst_control, float((mu - control).abs().max()))
+        worst_control = max(worst_control, float((mu - control - offset).abs().max()))
         if len(perturbations) > 1:
             flipped = model(control, list(reversed(perturbations)))["mean"]
             worst_order = max(worst_order, float((mu - flipped).abs().max()))
 
-    log(f"  premise: min mu {worst_negative:.2e}, "
-        f"untrained prediction equals the control to {worst_control:.2e}, "
+    log(f"  premise: min mu {worst_negative:.2e}, untrained prediction equals the "
+        f"control plus softplus(v)={offset:.2e} to {worst_control:.2e}, "
         f"order-invariant to {worst_order:.2e}")
     if worst_negative < 0.0:
         raise SystemExit(
@@ -98,10 +104,11 @@ def verify_premise(model, data, stats, conditions: list[str], log,
             f"the whole rebuild exists to remove - see docs/DESIGN.md C2.")
     if worst_control > tolerance or worst_order > tolerance:
         raise SystemExit(
-            f"an untrained model must be the control ({worst_control:.3e}) and must "
-            f"ignore the order of a combination ({worst_order:.3e}); tolerance "
-            f"{tolerance:g}. Starting anywhere else means the run begins at an unnamed "
-            f"point and nothing downstream can be compared to a baseline.")
+            f"an untrained model must be the control plus softplus(turn_on_init) "
+            f"({worst_control:.3e} off it) and must ignore the order of a combination "
+            f"({worst_order:.3e}); tolerance {tolerance:g}. Starting anywhere else means "
+            f"the run begins at an unnamed point and nothing downstream can be compared "
+            f"to a baseline.")
 
 
 def main() -> None:

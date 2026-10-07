@@ -281,5 +281,8 @@ def _scale_report(model, perturbations: list[int]) -> str:
     with torch.no_grad():
         embedding = float(model.modulation.embed(perturbations).abs().max())
         u_bound = float(model.modulation.to_u.weight.abs().max())
-        v_bias = float(model.modulation.to_v.bias.mean())
-    return f"|e| {embedding:.4f}  |Wu| {u_bound:.4f}  v_bias {v_bias:+.3f}"
+        # The WEIGHT, not the bias. to_v starts at zero weight, so all of the turn-on
+        # term's learning shows up here while the bias barely moves - reading the bias
+        # alone made the term look dead when it was not.
+        v_weight = float(model.modulation.to_v.weight.abs().max())
+    return f"|e| {embedding:.4f}  |Wu| {u_bound:.4f}  |Wv| {v_weight:.4f}"

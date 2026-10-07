@@ -70,10 +70,10 @@ class PerturbationModulation(nn.Module):
         for layer in (self.to_u, self.to_v, self.to_q):
             nn.init.zeros_(layer.weight)
         nn.init.zeros_(self.to_u.bias)
-        # softplus(-10) = 4.5e-5, so the turn-on term contributes about 0.003 of L2 across
-        # 5,000 genes at the start - small enough that the untrained model is Control and
-        # not Control-plus-something. -6 was the first choice and is 0.18, which is not.
-        nn.init.constant_(self.to_v.bias, -10.0)
+        # The same number sets where the turn-on term starts AND how large a gradient can
+        # reach it, since d/dv softplus(v) = sigmoid(v). src/config.py carries the
+        # trade-off and the measurements.
+        nn.init.constant_(self.to_v.bias, float(cfg["turn_on_init"]))
 
         # FROM THE DATA, like v2's intercept: each gene's observed detection rate. The
         # alternative, a constant, makes q wrong for every gene at once in a quantity that

@@ -223,6 +223,21 @@ DEFAULTS: dict[str, Any] = {
         # [0.05, 20], which covers anything log1p expression does, and one bad step
         # cannot put the factor at 1e9 and lose the run.
         "log_factor_max": 3.0,
+        # Where softplus(v) starts, and a trade-off rather than a free choice.
+        #
+        # d/dv softplus(v) = sigmoid(v), so the SAME number that makes the turn-on term
+        # start at zero also scales every gradient reaching it. At -10 that factor is
+        # 4.5e-5 and the term is initialised into a dead zone - the first real run showed
+        # v's bias moving from -10.000 to -9.899 over 60 epochs, which is nothing.
+        #
+        #   v     softplus(v)   gradient    L2 it adds at initialisation
+        #  -10     0.000045     0.000045       0.0032
+        #   -6     0.002476     0.002473       0.1751
+        #   -4     0.018150     0.017986       1.2834
+        #
+        # Lower keeps "an untrained model is exactly the control" true; higher lets the
+        # term learn at all. Swept rather than argued - see the sweep in docs/FINDINGS.md.
+        "turn_on_init": -10.0,
         # Stage 2 - the Koopman operators and their anticommutator. Off while the decoder
         # is being established, because it already sees the summed embedding and can
         # represent an interaction: running both lets two terms explain one quantity,
