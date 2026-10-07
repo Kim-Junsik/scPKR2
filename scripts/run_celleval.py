@@ -250,15 +250,6 @@ def main() -> None:
                              "realised mean upward - measured at 1.8545 against gamma's "
                              "1.5348 on L2, where the stated mean scores 1.4532. The "
                              "default is the measurement, not the newer option.")
-    parser.add_argument("--no-cap", action="store_true",
-                        help="do NOT cap a realised cell at its gene's training maximum. "
-                             "The cap is on by default for --gate sample because without "
-                             "it the head emits values a hundred times anything observed "
-                             "(ALOX15: realised 178.87, observed maximum 1.77) and "
-                             "cell-eval refuses the export. Measured cost, as mean L2 "
-                             "against the real condition means: 2.2386 without, 2.2404 "
-                             "with. This flag exists to reproduce that number, not to be "
-                             "used.")
     parser.add_argument("--calibration", default=None, metavar="C,P",
                         help="the per-condition residual scale s = clip(c ||r||^-p, 0, "
                              "s_max), as `dev_rule.py --fit-all` fitted it on the "
@@ -273,19 +264,13 @@ def main() -> None:
     if args.calibration:
         c, _, p = args.calibration.partition(",")
         calibration = {"residual_coefficient": float(c), "residual_power": float(p)}
-    # The realisation cap is not optional for a sample-gate export: without it the head
-    # emits values a hundred times anything the gene has ever been observed at and
-    # cell-eval refuses the file. It is turned on by default HERE rather than in
-    # src/config.py so that training and every L2 are left exactly as they were.
+    # NO CAP AND NO FLOOR. v2 needed both because its mean could be negative and its
+    # magnitude mu/q could reach a hundred times the mean; mu >= 0 holds by construction
+    # here and q comes from the decoder, so there is nothing to clamp and nothing to
+    # bound. If cell-eval refuses an export from this model, that is a defect to find
+    # rather than a value to cap.
     if args.gate == "sample":
         calibration = dict(calibration or {})
-        if not args.no_cap:
-            calibration["cap_realisation"] = True
-        # The default is gamma because it was measured to be better, not because it is
-        # newer. On final_norman_additive_f0_s0, L2 against the true condition means at
-        # 4,096 cells: 1.8545 with the clamped draw against 1.5348 with gamma, where the
-        # mean the model states scores 1.4532. The clamp was biasing every realised cell
-        # upward, which cost the distribution metrics as well as this one.
         calibration["realisation"] = args.realisation
 
     # The gate AND the calibration go in the folder name. Both change the predictions
@@ -333,7 +318,7 @@ def main() -> None:
                 checkpoint_path, map_location="cpu",
                 weights_only=False)["config"]["train"]["device"],
             gate=args.gate, eval_overrides=calibration)
-        if calibration:
+        if calibration and "residual_coefficient" in calibration:
             print(f"calibration applied: s = clip({calibration['residual_coefficient']}"
                   f" ||r||^-{calibration['residual_power']}, 0, "
                   f"{model.residual_scale_max})")

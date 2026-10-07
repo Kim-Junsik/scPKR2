@@ -69,6 +69,8 @@ TABLES = {
  ("scDFM",      [1.6567, 0.0028, 0.0220,  0.8289, 0.8933, 0.8776, MISSING, MISSING]),
  ("scPKR (v2)",
                 [2.2804, 0.00530, 0.03303, 0.8021, 0.8368, 0.8571, MISSING, MISSING]),
+ ("scPKR2 (ours)",
+                [1.4900, MISSING, MISSING, MISSING, MISSING, MISSING, MISSING, MISSING]),
 ],
 }
 
@@ -76,6 +78,12 @@ TABLES = {
 # between population means is what this column asks for, and the realisation only adds
 # variance to it - 0.047 to 0.091 on three blocks, and 0.697 on ComboSciPlex, which is
 # out of line with the rest and not yet explained.
+# This repository's L2, measured by scripts/compare_to_ridge.py under the soft gate at
+# 4,096 cells - the same protocol the ridge row is quoted under. ComboSciPlex has one
+# fold, so its number is final rather than a per-fold reading. The five cell-eval columns
+# are blank until run_celleval.py has produced them.
+OURS = {"Table 3  ComboSciPlex": (1.4900, 1.8577)}
+
 SOFT_L2 = {"Table 1  Norman additive split": 1.5608,
            "Table 2  Norman holdout split - Single": 1.4136,
            "Table 2  Norman holdout split - Double": 1.9761,
@@ -119,8 +127,12 @@ def render(name: str, rows: list, markdown: bool, digits: int) -> str:
     soft = SOFT_L2.get(name)
     if soft is not None:
         out += ["",
-                f"scPKR's L2 from the mean it states rather than from sampled cells: "
+                f"scPKR (v2) L2 from the mean it states, not from sampled cells: "
                 f"{soft:.4f}."]
+    ours = OURS.get(name)
+    if ours is not None:
+        out += [f"scPKR2, soft gate, 4,096 cells, same protocol as the ridge "
+                f"row: {ours[0]:.4f} against ridge {ours[1]:.4f}."]
     return "\n".join(out)
 
 

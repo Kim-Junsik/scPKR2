@@ -143,17 +143,18 @@ DEFAULTS: dict[str, Any] = {
         # returns the mean and never goes through the realisation path, so every
         # reported L2 is unaffected. Without it the sample gate emits values a hundred
         # times anything observed (ALOX15: realised 178.87, observed maximum 1.77) and
-        # cell-eval refuses the export outright.
-        "cap_realisation": False,
         # clamped_gaussian | gamma. How a realised magnitude is drawn, at inference only.
         # The clamp in clamped_gaussian biases the realised mean upward by 0.40 of L2,
         # measured and converged; gamma matches the same mean and variance with a
         # distribution that is already positive and so has no clamp to bias.
-        "realisation": "clamped_gaussian",
+        # gamma draws a magnitude with the right mean and variance from a distribution
+        # that is already positive; clamped_gaussian is what training's likelihood
+        # assumes and biases the realised mean upward, measured at 1.8545 against
+        # gamma's 1.5348 on v2. gamma is the default here because nothing in this
+        # repository needs the old behaviour reproduced.
+        "realisation": "gamma",
         # Lower bound on the hurdle's detection probability, at inference. None keeps
         # whatever the run was trained with (1e-2). It bounds a realised magnitude at
-        # mu/q_floor and provably cannot move the mean, since q * (mu/q) = mu for any q.
-        "hurdle_q_floor": None,
         # Global magnitude correction applied AFTER decoding (predict.fit_alpha).
         # The model's predicted displacement is systematically too short - measured
         # ratio 0.646 on training singles, the conditions the loss supervises most
