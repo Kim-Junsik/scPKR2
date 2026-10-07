@@ -51,14 +51,15 @@ class PathwayModulation(nn.Module):
 
     def __init__(self, config: dict, observables, n_perturbations: int,
                  detection: torch.Tensor | None = None,
-                 dispersion: torch.Tensor | None = None):
+                 dispersion: torch.Tensor | None = None,
+                 ceiling: torch.Tensor | None = None):
         super().__init__()
         self.observables = observables
         self.n_genes = len(observables.gene_names)
         self.n_perturbations = int(n_perturbations)
         self.modulation = PerturbationModulation(
             config, observables.dim, self.n_genes, n_perturbations,
-            detection=detection, dispersion=dispersion)
+            detection=detection, dispersion=dispersion, ceiling=ceiling)
         self.head = HurdleRealisation(config)
 
         # Stage 2. Off here, and the training loop skips its observable-space terms when

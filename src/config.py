@@ -152,7 +152,15 @@ DEFAULTS: dict[str, Any] = {
         # assumes and biases the realised mean upward, measured at 1.8545 against
         # gamma's 1.5348 on v2. gamma is the default here because nothing in this
         # repository needs the old behaviour reproduced.
-        "realisation": "gamma",
+        # beta | gamma | clamped_gaussian. How a realised magnitude is drawn.
+        #
+        # beta is supported on [0, the gene's observed maximum] with the mean exactly
+        # right, so a realised cell is in the range that gene actually occupies BY
+        # CONSTRUCTION. gamma gets the mean right too but is unbounded, and with the
+        # spread clamped at e^2 = 7.39 its tail reached 59.11 where cell-eval's limit is
+        # 15. clamped_gaussian is what training's likelihood assumes and biases the mean
+        # upward; it exists to reproduce v2's number and for nothing else.
+        "realisation": "beta",
         # Lower bound on the hurdle's detection probability, at inference. None keeps
         # whatever the run was trained with (1e-2). It bounds a realised magnitude at
         # Global magnitude correction applied AFTER decoding (predict.fit_alpha).

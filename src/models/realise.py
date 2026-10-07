@@ -28,7 +28,7 @@ class HurdleRealisation(nn.Module):
         cfg = config["model"]
         self.bce_weight = float(cfg["hurdle_bce_weight"])
         self.gate_mode = cfg["hurdle_gate"]
-        self.realisation = str(config["eval"].get("realisation", "gamma"))
+        self.realisation = str(config["eval"].get("realisation", "beta"))
 
     def loss(self, params: dict, x: torch.Tensor, **_) -> tuple[torch.Tensor, dict]:
         mean = params["mean"]
@@ -74,7 +74,38 @@ class HurdleRealisation(nn.Module):
 
         if self.gate_mode == "sample":
             spread = params["log_scale"].exp().clamp(min=1e-6)
-            if self.realisation == "gamma":
+            if self.realisation == "beta":
+                # Supported on [0, ceiling] and with mean exactly m. The hurdle's m is
+                # what a cell holds when the gene is detected, so it lives in the range
+                # that gene actually occupies - and a distribution ON that range is the
+                # honest way to say so. Capping a draw from an unbounded one says the
+                # same thing and takes the mean with it, which cost v2 0.80 of L2 on
+                # ComboSciPlex.
+                #
+                # Gamma is unbounded, and that is not academic here: with the spread
+                # clamped at e^2 = 7.39 a gamma with mean 7 crosses 15 often enough that
+                # cell-eval refused the export at 59.11.
+                # Widened where the mean does not fit inside the gene's observed range.
+                # A Beta on [0, c] cannot have a mean above c, so clamping m at 1 there
+                # would silently replace the mean with c - the realisation would be
+                # bounded and WRONG, which is the trade this whole design refuses. The
+                # support grows to hold the mean instead, and the bound becomes
+                # max(ceiling, m): still finite, still the data's scale wherever the mean
+                # fits in it, and never a lie about the mean. A mu above what its gene
+                # has ever reached is a defect in mu, and it belongs in the L2 rather
+                # than hidden here.
+                ceiling = torch.maximum(params["ceiling"], magnitude * 1.001
+                                        ).clamp(min=1e-6)
+                m = (magnitude / ceiling).clamp(1e-6, 1.0 - 1e-6)
+                # A Beta cannot have more variance than m(1-m); asking for more is asking
+                # for a distribution that does not exist, so the request is clipped there
+                # rather than silently reinterpreted.
+                var = ((spread / ceiling) ** 2).clamp(max=0.95 * m * (1.0 - m))
+                nu = (m * (1.0 - m) / var.clamp(min=1e-12) - 1.0).clamp(min=1e-3)
+                beta = torch.distributions.Beta((m * nu).clamp(min=1e-4),
+                                                ((1.0 - m) * nu).clamp(min=1e-4))
+                magnitude = beta.sample() * ceiling
+            elif self.realisation == "gamma":
                 # Mean m and variance s^2 exactly, from a distribution already positive:
                 # Gamma(k, 1/theta) with k = (m/s)^2, theta = s^2/m has mean k theta = m.
                 # v2 drew a gaussian and clamped it at zero, and the clamp biased the

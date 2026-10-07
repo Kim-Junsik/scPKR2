@@ -224,3 +224,68 @@ def test_the_detection_rate_initialises_q():
     with torch.no_grad():
         q = model(cells, [])["q"]
     assert torch.allclose(q.mean(dim=0), detection, atol=1e-3)
+
+
+def test_the_magnitude_cannot_exceed_what_the_gene_reaches_in_the_data():
+    """q >= mu / ceiling, so mu/q <= ceiling - and the mean is untouched by it.
+
+    The hurdle says E[x] = q m, where m is what a cell holds WHEN the gene is detected.
+    m cannot exceed what that gene has ever been observed at. Imposed on q rather than by
+    capping m, because q (mu/q) = mu for ANY q while capping m takes the mean down with
+    it - v2 capped and lost 0.80 of L2 on ComboSciPlex.
+
+    It is needed because mu and q are separate outputs that do not see each other: the
+    trained model emitted mu = 6.16 beside q = 0.001 on the same entry, mu/q reached 342,
+    and cell-eval refused the export at 59.11 against a threshold of 15.
+    """
+    cells = control_cells()
+    ceiling = cells.max(dim=0).values.clamp(min=1e-3)
+    config = config_module.load([])
+    torch.manual_seed(0)
+    model = PathwayModulation(config, FakeObservables(), N_PERTURBATIONS,
+                              ceiling=ceiling).eval()
+    push_downward(model)
+    with torch.no_grad():
+        params = model(cells, [1, 3])
+    # q can only hold m under the ceiling while mu itself is under it; where the model's
+    # MEAN exceeds what the gene has ever reached, no choice of q fixes that and the mean
+    # is the thing that is wrong. The bound asserted is therefore max(ceiling, mu).
+    bound = torch.maximum(ceiling.expand_as(params["mean"]), params["mean"])
+    assert float(((params["magnitude"] - bound) / bound.clamp(min=1e-3)).max()) <= 1e-4, (
+        f"magnitude reached {float(params['magnitude'].max()):.2f} against a bound of "
+        f"{float(bound.max()):.2f}")
+    # The mean is the quantity every reported L2 is computed from, and a floor on q may
+    # not move it: q * (mu/q) = mu identically.
+    assert torch.allclose(params["q"] * params["magnitude"], params["mean"], atol=1e-5)
+
+
+def test_a_drawn_cell_stays_inside_the_range_its_gene_occupies():
+    """The beta draw is supported on [0, ceiling], so no tail can leave the data's range.
+
+    gamma gets the mean right and is unbounded; with the spread clamped at e^2 = 7.39 its
+    tail reached 59.11 on the real export and cell-eval, whose limit is 15, refused the
+    file. Capping that draw would fix the range and lose the mean, which is the trade v2
+    made and paid 0.80 of L2 for on ComboSciPlex.
+    """
+    cells = control_cells()
+    ceiling = cells.max(dim=0).values.clamp(min=1e-3)
+    config = config_module.load(["model.hurdle_gate=sample", "eval.realisation=beta"])
+    torch.manual_seed(0)
+    model = PathwayModulation(config, FakeObservables(), N_PERTURBATIONS,
+                              ceiling=ceiling).eval()
+    with torch.no_grad():
+        for layer in (model.modulation.to_u, model.modulation.to_v,
+                      model.modulation.to_q):
+            layer.weight.normal_(0.0, 1.0)
+            layer.bias.normal_(0.0, 1.0)
+        params = model(cells, [1, 3])
+        drawn = torch.stack([model.head.point_estimate(params) for _ in range(200)])
+    assert float(drawn.min()) >= 0.0
+    bound = torch.maximum(ceiling.expand_as(params["magnitude"]),
+                          params["magnitude"] * 1.001)
+    assert float((drawn - bound).max()) <= 1e-3, (
+        f"a drawn cell reached {float(drawn.max()):.2f} outside its support, bounded at "
+        f"{float(bound.max()):.2f}")
+    # And the mean still has to be mu, which is what every reported L2 is computed from.
+    error = (drawn.mean(dim=0).mean(dim=0) - params["mean"].mean(dim=0)).abs()
+    assert float((error / params["mean"].mean(dim=0).clamp(min=1e-3)).max()) < 0.15

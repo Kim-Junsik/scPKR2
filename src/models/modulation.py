@@ -46,7 +46,8 @@ class PerturbationModulation(nn.Module):
 
     def __init__(self, config: dict, observable_dim: int, n_genes: int,
                  n_perturbations: int, detection: torch.Tensor | None = None,
-                 dispersion: torch.Tensor | None = None):
+                 dispersion: torch.Tensor | None = None,
+                 ceiling: torch.Tensor | None = None):
         super().__init__()
         cfg = config["model"]
         width = int(cfg["decoder_width"])
@@ -111,6 +112,28 @@ class PerturbationModulation(nn.Module):
         with torch.no_grad():
             self.to_q.bias.copy_(torch.log(rate / (1.0 - rate)))
 
+        # The largest value each gene reaches in the TRAINING cells, used as a floor on q
+        # rather than as a cap on the magnitude.
+        #
+        # WHY A FLOOR ON q AND NOT A CAP. The hurdle says E[x] = q m, where m is the value
+        # a cell takes WHEN THE GENE IS DETECTED. m cannot exceed what that gene has ever
+        # been observed at. Imposing that through q - q >= mu / ceiling - bounds m by
+        # construction and leaves the mean exactly alone, since q (mu/q) = mu for any q.
+        # Capping m instead throws the excess away and takes the mean down with it, which
+        # is what v2 did: its capped realisation lost 0.80 of L2 on ComboSciPlex.
+        #
+        # IT IS NEEDED BECAUSE mu AND q DO NOT SEE EACH OTHER. They are separate outputs,
+        # and the trained model happily emits mu = 6.16 with q = 0.001 on the same entry -
+        # a gene with mean 6.16 detected in one cell in a thousand, which is not a
+        # statement about anything. mu/q then reaches 342 and cell-eval refuses the
+        # export at 59.11 against its threshold of 15.
+        #
+        # Not persistent: build_model recomputes it from the training rows on every load,
+        # so a checkpoint written before it existed still loads.
+        self.register_buffer("ceiling",
+                             torch.full((n_genes,), float("inf")) if ceiling is None
+                             else ceiling.clamp(min=1e-3).clone(), persistent=False)
+
         # The magnitude's spread, per gene, from the data as v2 did it.
         self.log_scale = nn.Parameter(
             torch.zeros(n_genes) if dispersion is None
@@ -153,6 +176,9 @@ class PerturbationModulation(nn.Module):
         u = (self.to_u(h) + u_add).clamp(-self.log_factor_max, self.log_factor_max)
         mean = x * torch.exp(u) + torch.nn.functional.softplus(self.to_v(h) + v_add)
         q = torch.sigmoid(self.to_q(h)).clamp(1e-3, 1.0 - 1e-6)
+        # mu / q <= ceiling, enforced on q so the mean survives it.
+        q = torch.maximum(q, (mean / self.ceiling).clamp(max=1.0 - 1e-6))
         return {"mean": mean, "q": q, "magnitude": mean / q,
+                "ceiling": self.ceiling.expand_as(mean),
                 "log_scale": self.log_scale.expand_as(mean).clamp(-6.0, 2.0),
                 "u": u}

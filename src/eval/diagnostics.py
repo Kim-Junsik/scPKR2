@@ -120,10 +120,11 @@ def build_model(config: dict, data, stats, fold: dict, method: str, device: str)
     # The largest value each gene reaches in the cells training is allowed to see.
     # Leak surface is the same one `rows` already defines, so a held-out condition
     # cannot raise it.
-    # No ceiling and no w_a: mu is non-negative by construction, so there is nothing to
-    # cap, and there is no closed-form term to carry.
+    # The ceiling is a FLOOR ON q, not a cap on the magnitude - see modulation.py. Same
+    # leak surface as `rows` already defines, so a held-out condition cannot raise it.
+    ceiling = torch.from_numpy(cells.max(axis=0).astype(np.float32))
     model = PathwayModulation(config, observables, data.n_perturbations,
-                              detection, dispersion).to(device)
+                              detection, dispersion, ceiling).to(device)
     model.head.realisation = str(config["eval"].get("realisation", "gamma"))
     return model, train_conditions, rows
 
