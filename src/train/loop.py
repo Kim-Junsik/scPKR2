@@ -106,14 +106,14 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
           device: str, rng: np.random.Generator, log, run_dir: str | None = None) -> dict:
     """The whole of training. Returns the last epoch's loss parts."""
     train_cfg = config["train"]
-    weights = model.additive_weights.detach().cpu().numpy()
-    conditions = trainable_conditions(data, stats, train_conditions, weights,
-                                      data.pert_index)
+    # EVERY condition is trainable now. v2 had to skip a combination whose perturbation
+    # the ridge could not cover, because its prediction would then be missing a term it
+    # could not supply. Here a perturbation's embedding is learned from whatever
+    # conditions contain it, so there is nothing to be uncovered BY.
+    conditions = [c for c in train_conditions
+                  if stats.has(c) and c != data.control_condition]
     if not conditions:
-        raise SystemExit(
-            "no trainable combination: every training double has a perturbation the "
-            "ridge could not cover. Check split.method and the fold - with nothing to "
-            "train on the model would score exactly ridge_additive and say nothing.")
+        raise SystemExit("no trainable condition in this fold")
     skipped = sum(1 for c in train_conditions
                   if data.naming.is_double(c) and c not in conditions)
     log(f"  training on {len(conditions)} combinations"
@@ -180,7 +180,10 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
 
             loss = torch.zeros((), device=device)
 
-            if fm_weight > 0:
+            # The observable-space terms supervise the Koopman operators, and stage 1
+            # has none. Running them against a model without operators is not a cheaper
+            # version of training - there is nothing on the other end of the gradient.
+            if fm_weight > 0 and model.interaction:
                 # One t PER SAMPLE. A single scalar for the batch gives the time axis one
                 # sample per step, so [0, 1] is covered sparsely; scPKFM measured the
                 # consequence as a predicted displacement 72 % of the true one.
@@ -191,14 +194,16 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                 loss = loss + fm_weight * fm
                 totals["fm"].append(float(fm))
 
-            if endpoint_weight > 0:
+            if endpoint_weight > 0 and model.interaction:
                 end = torch.nn.functional.mse_loss(
                     model.operators.flow(p0c, perturbations), p1c)
                 loss = loss + endpoint_weight * end
                 totals["endpoint"].append(float(end))
 
-            # The prediction, and everything gene-space hangs off it.
-            predicted_mean = x_source + model.displacement(x_source, perturbations)
+            # The prediction. One call: the head's parameters and the mean come from
+            # the same forward pass, where v2 recomputed the head from the mean.
+            params = model(x_source, perturbations)
+            predicted_mean = params["mean"]
 
             if gene_weight > 0:
                 # SQUARED NORM, not a per-gene mean. The reported metric is
@@ -215,13 +220,12 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                 loss = loss + gene_weight * gene
                 totals["gene"].append(float(gene))
 
-            head_loss, head_parts = model.head.loss(model.head(predicted_mean),
-                                                    x_target_c)
+            head_loss, head_parts = model.head.loss(params, x_target_c)
             loss = loss + head_loss
             totals["head"].append(float(head_loss))
 
             if mmd_weight > 0:
-                realised = model.head.point_estimate(model.head(predicted_mean))
+                realised = model.head.point_estimate(params)
                 sigmas = median_sigmas(x_target_c, scales=(0.5, 1.0, 2.0, 4.0))
                 mmd = mmd2_unbiased_multi_sigma(realised, x_target_c, sigmas)
                 loss = loss + mmd_weight * mmd
@@ -249,8 +253,7 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                             ("fm", "endpoint", "gene", "head", "mmd") if k in parts)
             log(f"  epoch {epoch + 1:4d}/{train_cfg['epochs']}  "
                 f"loss {parts.get('loss', float('nan')):.5f}{extra}  "
-                f"| operator |B| {float(model.operators.compose(perturbations).abs().max()):.4f}"
-                f"  readout |W| {_readout_scale(model):.4f}"
+                f"| {_scale_report(model, perturbations)}"
                 f"  fallback {share:.1%}")
         if share > float(train_cfg["coupling_fallback_max"]):
             raise SystemExit(
@@ -269,7 +272,14 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
     return parts
 
 
-def _readout_scale(model) -> float:
-    readout = model.readout
-    tensor = readout.weight if readout.kind == "dense" else readout.values
-    return float(tensor.abs().max())
+def _scale_report(model, perturbations: list[int]) -> str:
+    """What to watch while this trains.
+
+    |u| is the one to watch: it is clamped at model.log_factor_max, and a run that pins
+    there is asking for a multiplicative factor the clamp will not give it.
+    """
+    with torch.no_grad():
+        embedding = float(model.modulation.embed(perturbations).abs().max())
+        u_bound = float(model.modulation.to_u.weight.abs().max())
+        v_bias = float(model.modulation.to_v.bias.mean())
+    return f"|e| {embedding:.4f}  |Wu| {u_bound:.4f}  v_bias {v_bias:+.3f}"

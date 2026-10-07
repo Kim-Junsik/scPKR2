@@ -38,7 +38,7 @@ from src.data import splits
 from src.eval import baselines
 from src.eval.diagnostics import _dataset, build_model, training_rows
 from src.eval.predict import evaluate_model
-from src.train.loop import train, trainable_conditions
+from src.train.loop import train
 
 
 def build_logger(path: str):
@@ -54,46 +54,54 @@ def build_logger(path: str):
 
 @torch.no_grad()
 def verify_premise(model, data, stats, conditions: list[str], log,
-                   tolerance: float = 1e-4) -> None:
-    """An untrained model is the additive baseline. Checked on TRAINING conditions.
+                   tolerance: float = 1e-3) -> None:
+    """What this model guarantees by construction, checked as numbers before training.
 
-    Two assertions, both exact by construction:
-      - the residual is identically zero, because W is zero
-      - the prediction's mean is the control mean plus sum_a w_a, because the head is
-        mean-preserving
+    v2's premise was that an untrained model IS the additive baseline, 1.6690. That
+    protection is gone on purpose - it came from a closed-form term that also carried
+    88 % of the signal and left the learned part with nothing to do on single
+    perturbations. What is left is weaker and still worth asserting:
 
-    The second is the one that catches a head which reparameterises the mean. Run under
-    the SOFT gate, since sample is only unbiased and would need thousands of draws to
-    show a violation this small.
+      mu >= 0 ALWAYS. The whole reason for x exp(u) + softplus(v). 33.8 % of v2's
+      per-cell predictions on ComboSciPlex were negative, which no non-negative
+      realisation can reproduce - flooring them cost 0.80 of L2 there. A single
+      negative here means the parameterisation is not doing what it is for.
+
+      THE UNTRAINED MODEL IS THE CONTROL. The output maps start at zero, so every output
+      is its bias: u = 0 and softplus(-10) = 4.5e-5, hence mu = x. This is the
+      STARTING POINT, not a baseline - Control scores 3.9937, and the run has to climb
+      from there to beat ridge's 1.6690. Asserting it means the run begins somewhere
+      nameable rather than at a random gene-space field.
+
+      ORDER DOES NOT MATTER. e_S is a sum, so A+B and B+A are the same prediction. A
+      simultaneous perturbation has no order and no training signal would impose this.
     """
-    gate = model.head.gate_mode
-    model.head.gate_mode = "soft"
-    try:
-        control = torch.as_tensor(data.cells(data.control_condition),
-                                  device=model.additive_weights.device)
-        control_mean = control.mean(dim=0).cpu().numpy()
-        worst_residual, worst_mean = 0.0, 0.0
-        for condition in conditions[:8]:
-            perturbations = [data.pert_index[g] for g in data.naming.genes(condition)]
-            residual = model.residual(control, perturbations)
-            worst_residual = max(worst_residual, float(residual.abs().max()))
-            predicted = model.predict(control, perturbations).mean(dim=0).cpu().numpy()
-            expected = control_mean + model.additive(perturbations).cpu().numpy()
-            worst_mean = max(worst_mean, float(np.abs(predicted - expected).max()))
-    finally:
-        model.head.gate_mode = gate
+    device = model.modulation.to_u.bias.device
+    control = torch.as_tensor(data.cells(data.control_condition), device=device)[:256]
+    worst_negative, worst_control, worst_order = 0.0, 0.0, 0.0
+    for condition in conditions[:8]:
+        perturbations = [data.pert_index[g] for g in data.naming.genes(condition)]
+        mu = model(control, perturbations)["mean"]
+        worst_negative = min(worst_negative, float(mu.min()))
+        worst_control = max(worst_control, float((mu - control).abs().max()))
+        if len(perturbations) > 1:
+            flipped = model(control, list(reversed(perturbations)))["mean"]
+            worst_order = max(worst_order, float((mu - flipped).abs().max()))
 
-    log(f"  premise: residual is zero to {worst_residual:.2e}, "
-        f"prediction equals the additive baseline to {worst_mean:.2e}")
-    if worst_residual > 0.0 or worst_mean > tolerance:
+    log(f"  premise: min mu {worst_negative:.2e}, "
+        f"untrained prediction equals the control to {worst_control:.2e}, "
+        f"order-invariant to {worst_order:.2e}")
+    if worst_negative < 0.0:
         raise SystemExit(
-            f"THE PREMISE IS BROKEN. An untrained model must predict exactly the "
-            f"additive baseline: residual {worst_residual:.3e} (must be 0) and mean "
-            f"deviation {worst_mean:.3e} (must be under {tolerance:g}).\n"
-            f"Training from here would not start at a measured baseline, which is the "
-            f"one thing this design buys. Do not train around it - the last time this "
-            f"fired the cause was the head clamping its mean per cell, which cost "
-            f"0.87 of L2 on Table 3 while every structural test passed.")
+            f"mu went negative ({worst_negative:.3e}). x exp(u) + softplus(v) cannot do "
+            f"that, so the parameterisation is not what is running. This is the defect "
+            f"the whole rebuild exists to remove - see docs/DESIGN.md C2.")
+    if worst_control > tolerance or worst_order > tolerance:
+        raise SystemExit(
+            f"an untrained model must be the control ({worst_control:.3e}) and must "
+            f"ignore the order of a combination ({worst_order:.3e}); tolerance "
+            f"{tolerance:g}. Starting anywhere else means the run begins at an unnamed "
+            f"point and nothing downstream can be compared to a baseline.")
 
 
 def main() -> None:
@@ -144,10 +152,11 @@ def main() -> None:
         f"({held_out:,} held-out cells excluded from the ridge fit, from Phi's "
         f"standardisation and from its anchor ranking)")
     log(f"  training conditions: {len(train_conditions)}")
-    covered = int((np.abs(model.additive_weights.cpu().numpy()).sum(axis=1) > 0).sum())
-    log(f"  perturbations the ridge covers: {covered} / {data.n_perturbations}"
-        + ("" if covered == data.n_perturbations else
-           "  <- the rest predict the control unchanged"))
+    seen = {data.pert_index[g] for c in train_conditions if stats.has(c)
+            for g in data.naming.genes(c) if g in data.pert_index}
+    log(f"  perturbations with training data: {len(seen)} / {data.n_perturbations}"
+        + ("" if len(seen) == data.n_perturbations else
+           "  <- the rest keep their initial embedding and predict the control"))
 
     log("\n=== the observables (fixed) ===")
     for key, value in model.observables.summary().items():
@@ -159,10 +168,8 @@ def main() -> None:
         log(f"  {key:32s} {value:,}")
 
     log("\n=== premise check (training conditions only) ===")
-    combinations = trainable_conditions(
-        data, stats, train_conditions,
-        model.additive_weights.detach().cpu().numpy(), data.pert_index)
-    verify_premise(model, data, stats, combinations or train_conditions, log)
+    verify_premise(model, data, stats,
+                   [c for c in train_conditions if stats.has(c)], log)
 
     log("\n=== training ===")
     parts = train(model, data, stats, train_conditions, config, device, rng, log,
@@ -174,7 +181,7 @@ def main() -> None:
         log(f"  {key:24s} {value}")
     log("  resid_R2 is measured against the ADDITIVE arithmetic, so 0.0 means tying it. "
         "An untrained run of this model sits there by construction, and the additive "
-        "component is a stronger predictor than that: see edist_rel_additive.")
+        "component is a stronger predictor than that: see edist_rel_control.")
 
     torch.save({"model": model.state_dict(), "config": config}, checkpoint_path)
     with open(os.path.join(run_dir, "results.json"), "w", encoding="utf-8") as out:

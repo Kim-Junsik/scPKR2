@@ -79,22 +79,23 @@ def predict_cells(model, control_cells: np.ndarray, condition: str,
 
 
 @torch.no_grad()
-def additive_cells(model, control_cells: np.ndarray, condition: str,
-                   pert_index: dict[str, int], device: str, naming) -> np.ndarray:
-    """The same transport with the residual switched off: the model's own baseline.
+def control_prediction(model, control_cells_in: np.ndarray, device: str) -> np.ndarray:
+    """The model's prediction with NO perturbation, realised.
 
-    This replaces scPKFM's `autoencode`, which measured what its bottleneck cost. There
-    is no bottleneck here, so the useful reference is the other one: what the model
-    scores before the learned term contributes. Every reported number should be read
-    against it, because a model that does not beat it has learned nothing that matters -
-    and unlike an autoencoder floor this reference is a real, strong predictor
-    (Table 3 1.858, Table 1 1.669, at or above scDFM on two of four tables).
+    v2 compared against its own additive term here, which it could do because that term
+    existed as a separate, closed-form part of the prediction. This model has no such
+    seam - the response is one quantity - so the in-model reference becomes the control
+    itself, which is a nameable baseline (Control scores 3.9937 on Table 1) rather than
+    a floor.
+
+    THE COMPARISON THAT MATTERS NOW LIVES OUTSIDE THE MODEL. ridge is scored by
+    scripts/baseline_l2.py at 1.6690 / 1.4160 / 2.2510 / 1.8580, and that is the line
+    this model has to clear. A run that beats the control and not ridge has learned
+    something, but not enough to report.
     """
     model.eval()
-    perturbations = [pert_index[g] for g in condition_genes(condition, naming)]
-    x = torch.as_tensor(control_cells, device=device)
-    mean = x + model.additive(perturbations)
-    return model.head.point_estimate(model.head(mean)).cpu().numpy()
+    x = torch.as_tensor(control_cells_in, device=device)
+    return model.predict(x, []).cpu().numpy()
 
 
 def evaluate_model(model, data, stats, folds, method, config,
@@ -135,11 +136,11 @@ def evaluate_model(model, data, stats, folds, method, config,
             edists.append(metrics.edist_rel(
                 predicted, data.cells(double), control_sample,
                 power=config["eval"]["edist_power"], device=config["eval"]["device"]))
-            # The same comparison with the learned term off. Not a floor: a strong
-            # predictor the model has to beat.
+            # The same comparison with no perturbation at all: how far this condition
+            # is from the control in the first place. A model whose prediction is no
+            # closer than this has moved the cells nowhere useful.
             additive_edists.append(metrics.edist_rel(
-                additive_cells(model, control_sample, double, data.pert_index,
-                               device, data.naming),
+                control_prediction(model, control_sample, device),
                 data.cells(double), control_sample,
                 power=config["eval"]["edist_power"], device=config["eval"]["device"]))
 
@@ -159,6 +160,6 @@ def evaluate_model(model, data, stats, folds, method, config,
         "r_de20": float(np.nanmean(de20s)) if edists else float("nan"),
         # What the additive component alone scores on the same cells. A model whose
         # edist_rel is not below this has learned nothing that reaches the population.
-        "edist_rel_additive": (float(np.nanmean(additive_edists))
+        "edist_rel_control": (float(np.nanmean(additive_edists))
                                if additive_edists else float("nan")),
     }

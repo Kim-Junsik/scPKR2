@@ -18,7 +18,7 @@ import torch
 from ..data.conventions import ConditionNaming
 from ..data.dataset import PerturbationData
 from ..data import splits
-from ..models.model import PathwayKoopmanResidual
+from ..models.model import PathwayModulation
 from ..models.observables import Observables
 from . import baselines
 from .baselines import ConditionMeans, training_conditions
@@ -120,14 +120,11 @@ def build_model(config: dict, data, stats, fold: dict, method: str, device: str)
     # The largest value each gene reaches in the cells training is allowed to see.
     # Leak surface is the same one `rows` already defines, so a held-out condition
     # cannot raise it.
-    ceiling = torch.from_numpy(cells.max(axis=0).astype(np.float32))
-    model = PathwayKoopmanResidual(config, observables, data.n_perturbations,
-                                  weights, detection, dispersion, ceiling).to(device)
-    model.head.cap_realisation = bool(config["eval"].get("cap_realisation", False))
-    model.head.realisation = str(config["eval"].get("realisation", "clamped_gaussian"))
-    floor = config["eval"].get("hurdle_q_floor")
-    if floor is not None:
-        model.head.q_floor = float(floor)
+    # No ceiling and no w_a: mu is non-negative by construction, so there is nothing to
+    # cap, and there is no closed-form term to carry.
+    model = PathwayModulation(config, observables, data.n_perturbations,
+                              detection, dispersion).to(device)
+    model.head.realisation = str(config["eval"].get("realisation", "gamma"))
     return model, train_conditions, rows
 
 

@@ -211,7 +211,23 @@ DEFAULTS: dict[str, Any] = {
         # none   the model produces the whole displacement. The control arm, and
         #        what scPKFM was: it starts at zero and has to find 88 % of the
         #        signal before reaching any of the residual.
-        "additive": "ridge",  # ridge | none
+        # The learned, cell-conditional response. See src/models/modulation.py.
+        #
+        # Small on purpose. v2's readout alone was 2.09 M and 95 % of the model, and
+        # nothing told us what that bought - starting large means never learning which
+        # part of the capacity was doing the work. These grow only when a measurement
+        # says they must.
+        "embed_dim": 64,
+        "decoder_width": 256,
+        # exp(u) is unbounded, so u is not. At 3.0 the multiplicative factor runs over
+        # [0.05, 20], which covers anything log1p expression does, and one bad step
+        # cannot put the factor at 1e9 and lose the run.
+        "log_factor_max": 3.0,
+        # Stage 2 - the Koopman operators and their anticommutator. Off while the decoder
+        # is being established, because it already sees the summed embedding and can
+        # represent an interaction: running both lets two terms explain one quantity,
+        # which is what broke scPKFM. docs/DESIGN.md C5 decides whether it comes back.
+        "interaction": False,
         # Ridge penalty for w_a. PROVISIONAL for the same reason eval.ridge_alpha is:
         # picking it by looking at test performance is not legitimate, so select it
         # by inner CV over the TRAINING combinations before quoting a final line.
