@@ -138,7 +138,10 @@ def main() -> None:
     os.makedirs(run_dir, exist_ok=True)
     log, handle = build_logger(os.path.join(run_dir, "train.log"))
 
-    torch.manual_seed(config["train"]["seed"])
+    # The weights are drawn under init_seed and everything after under train.seed, so
+    # the two sources can be moved independently. build_model runs below, after this.
+    init_seed = config["train"]["init_seed"]
+    torch.manual_seed(config["train"]["seed"] if init_seed is None else int(init_seed))
     rng = np.random.default_rng(config["train"]["seed"])
 
     log(f"run {tag}")
@@ -153,6 +156,9 @@ def main() -> None:
 
     log("\n=== the additive component (closed form, not learned) ===")
     model, train_conditions, rows = build_model(config, data, stats, fold, method, device)
+    # Back to train.seed for everything downstream of construction: the batch order and
+    # the coupling must not inherit init_seed, or the two would move together again.
+    torch.manual_seed(config["train"]["seed"])
     # Leak accounting, in the log so it is in the artifact rather than in someone's head.
     held_out = data.x.shape[0] - len(rows)
     log(f"  cells visible to training: {len(rows):,} / {data.x.shape[0]:,}  "

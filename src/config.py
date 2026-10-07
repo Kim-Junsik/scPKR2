@@ -563,6 +563,19 @@ DEFAULTS: dict[str, Any] = {
         "save_every": 25,
         "device": "cuda",
         "seed": 0,
+        # The seed for the WEIGHTS alone. None means "use train.seed", which is what
+        # every run so far did, so nothing already measured changes.
+        #
+        # It exists to separate what a seed actually changes. One seed moves three things
+        # at once - the initial weights, the order cells are drawn in, and the OT plan's
+        # own randomness - and ComboSciPlex's spread across seeds is 0.31 at 2,500 epochs
+        # and 0.29 at 250, so training length is not what causes it. Holding train.seed
+        # fixed and moving this one says whether the initialisation is.
+        #
+        # It matters because v2 started from the ridge solution and had a spread of 0.08
+        # on the same block. If the weights alone reproduce 0.3 here, that is the cost of
+        # the random start docs/DESIGN.md 5.3 took on, measured rather than argued.
+        "init_seed": None,
         "out_dir": "results/runs",
     },
 }
