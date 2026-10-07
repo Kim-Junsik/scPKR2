@@ -242,14 +242,15 @@ def main() -> None:
     parser.add_argument("--max-cells", type=int, default=None,
                         help="cap cells per condition; cell-eval runs a DE test per "
                              "condition, so the full export is slow to score")
-    parser.add_argument("--realisation", default="gamma",
-                        choices=["gamma", "clamped_gaussian"],
-                        help="how a realised magnitude is drawn. gamma matches the mean "
-                             "and variance exactly with a positive distribution; "
+    parser.add_argument("--realisation", default="beta",
+                        choices=["beta", "gamma", "clamped_gaussian"],
+                        help="how a realised magnitude is drawn. beta is supported "
+                             "on [0, the gene's observed maximum] with the mean exactly "
+                             "right, so a cell cannot leave the range its gene occupies. "
+                             "gamma has the right mean and is unbounded - its tail "
+                             "reached 62.88 against cell-eval's limit of 15. "
                              "clamped_gaussian is what training assumes and biases the "
-                             "realised mean upward - measured at 1.8545 against gamma's "
-                             "1.5348 on L2, where the stated mean scores 1.4532. The "
-                             "default is the measurement, not the newer option.")
+                             "mean upward; it reproduces v2's number and nothing else.")
     parser.add_argument("--calibration", default=None, metavar="C,P",
                         help="the per-condition residual scale s = clip(c ||r||^-p, 0, "
                              "s_max), as `dev_rule.py --fit-all` fitted it on the "
