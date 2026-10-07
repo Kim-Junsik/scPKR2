@@ -108,7 +108,7 @@ def celleval_means(run_dir: str, gate: str | None = None,
 def compute_l2(run_dir: str, device: str, n_cells: int, gate: str | None = None,
                infer_top_gene: int | None = None, group: str = "double",
                calibration: str | None = None,
-               realisation: str = "gamma") -> float:
+               realisation: str = "beta") -> float:
     """Eq. (15) over the fold's test doubles - the same conditions resid_R2 uses.
 
     `infer_top_gene` restricts the gene space to the subset scDFM scores on, which
@@ -173,10 +173,12 @@ def main() -> None:
                              "out the singles of every held-out gene, and the "
                              "literature reports Single and Double as separate "
                              "blocks - run this twice to fill both.")
-    parser.add_argument("--realisation", default="gamma",
-                        choices=["gamma", "clamped_gaussian"],
-                        help="must match what run_celleval.py exported with; it only "
-                             "applies to --gate sample")
+    parser.add_argument("--realisation", default="beta",
+                        choices=["beta", "gamma", "clamped_gaussian"],
+                        help="must match what run_celleval.py exported with, and the "
+                             "default is kept equal to that script's so the two cannot "
+                             "silently disagree - they did once, and a change that did "
+                             "nothing looked like a change that did not work")
     parser.add_argument("--calibration", default=None, metavar="C,P",
                         help="the per-condition residual scale this table reports, "
                              "c,p for s = clip(c ||r||^-p, 0, s_max). It is applied to "
