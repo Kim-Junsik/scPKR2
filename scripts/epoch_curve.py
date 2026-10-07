@@ -14,9 +14,16 @@ dataset by looking at those test figures would be selecting on the test set, so 
 choice has to be made against HELD-OUT TRAINING conditions - which is what
 split.validation=true carves out - and then applied to the real runs.
 
-A run saved with train.save_every writes one checkpoint per interval. This scores every
-one of them on that run's own held-out conditions and prints the curve, so a single
-validation run answers the question instead of a sweep of runs answering one point each.
+IT DOES NOT ANSWER "HOW MANY EPOCHS SHOULD A RUN BE", AND IT CANNOT. The learning rate
+is a cosine from 1e-3 to 1e-6 across the run's TOTAL length, so epoch 250 of a 2,500
+epoch run sits at about 9e-4 while epoch 250 of a 250 epoch run has annealed to 1e-6.
+They are different models, and the second scores better: a standalone 250-epoch run
+reaches 1.6759 on combosciplex validation where the best point anywhere inside a
+2,500-epoch run is 1.9227.
+
+So this reads one schedule's trajectory, which is worth seeing - it is how overfitting
+shows itself - but choosing a length means training separate runs that each anneal in
+full and comparing those with scripts/compare_to_ridge.py.
 
 THE RUN PASSED HERE MUST BE A VALIDATION RUN. Its "test" conditions are then validation
 conditions held out of training, and nothing in the reported test set has been touched.
@@ -96,8 +103,10 @@ def main() -> None:
     print("  " + "-" * 20)
     print(f"  best at epoch {best[1]} with {best[0]:.4f}")
     print("")
-    print("  Use that epoch count for the real runs. It is a choice made on conditions")
-    print("  held out of training, so it does not touch the reported test set.")
+    print("  That is the best point ON THIS SCHEDULE, not the length a run should be.")
+    print("  The learning rate anneals over the run's total length, so a shorter run is")
+    print("  a different model and usually a better one. To choose a length, train")
+    print("  separate runs and compare them with scripts/compare_to_ridge.py.")
 
 
 if __name__ == "__main__":
