@@ -264,9 +264,15 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
 
         if run_dir and train_cfg["save_every"] and (epoch + 1) % int(train_cfg["save_every"]) == 0:
             import os
+            # ONE FILE PER EPOCH, not one file overwritten. How long to train is a
+            # hyperparameter and it has to be chosen on validation, not assumed: at 400
+            # epochs ComboSciPlex scores 1.9101 and norman 1.4955, and at 2,500 they are
+            # 1.4900 and 1.7041 - the two datasets move in OPPOSITE directions. Keeping
+            # every checkpoint turns one validation run into the whole epoch curve
+            # instead of one point on it.
             torch.save({"model": model.state_dict(), "config": config,
                         "epoch": epoch + 1},
-                       os.path.join(run_dir, "checkpoint_partial.pt"))
+                       os.path.join(run_dir, f"checkpoint_e{epoch + 1:05d}.pt"))
 
     log(f"  trained in {time.time() - started:.1f}s")
     return parts
