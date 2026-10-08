@@ -91,6 +91,48 @@ def fit_per_gene_scale(stats: ConditionMeans, train_doubles: list[str],
     return numerator / np.maximum(denominator, 1e-12)
 
 
+def fit_ridge_log_ratio(stats: ConditionMeans, train_conditions: list[str],
+                        perturbations: list[str], alpha: float = 1.0) -> dict:
+    """Per-perturbation LOG FOLD CHANGES, by the same ridge as fit_ridge_additive.
+
+    WHY A RATIO AND NOT A DIFFERENCE. The model predicts mu = x exp(u) + softplus(v),
+    which cannot represent x + w where w is negative: that would need exp(u) = 1 + w/x,
+    a different number in every cell. The inability IS the reason the model cannot emit
+    a negative cell, so it is not a defect to work around. What the multiplicative term
+    can hold is a fold change, and the counterpart of an additive weight there is
+    log(m_perturbed / m_control). Summing those over a set multiplies the fold changes,
+    which is what the embedding sum already does.
+
+    (m + 1) / (m_control + 1), not m / m_control. The data is log1p, so its means are
+    already shifted by one and a gene at zero in the control would otherwise divide by
+    nothing. Reusing the transform's own offset keeps this free of a chosen constant.
+
+    THIS IS AN INITIALISATION, not a prediction. The ridge baseline reported everywhere
+    is fit_ridge_additive; this exists only to start the learned term somewhere measured
+    rather than at zero, after docs/FINDINGS.md section 5 found that gradient descent
+    does not recover the additive structure on its own.
+    """
+    index = {p: i for i, p in enumerate(perturbations)}
+    control = stats.control
+    rows, targets = [], []
+    for condition in train_conditions:
+        if not stats.has(condition):
+            continue
+        genes = condition_genes(condition, stats.naming)
+        if any(g not in index for g in genes):
+            continue
+        row = np.zeros(len(perturbations), dtype=np.float64)
+        for g in genes:
+            row[index[g]] = 1.0
+        rows.append(row)
+        targets.append(np.log((stats.mean[condition] + 1.0) / (control + 1.0)))
+
+    x = np.asarray(rows)
+    y = np.asarray(targets, dtype=np.float64)
+    gram = x.T @ x + alpha * np.eye(x.shape[1])
+    return {"u": np.linalg.solve(gram, x.T @ y), "index": index}
+
+
 def fit_ridge_additive(stats: ConditionMeans, train_conditions: list[str],
                        perturbations: list[str], alpha: float = 1.0,
                        weight_by_cells: bool = False) -> dict[str, np.ndarray]:

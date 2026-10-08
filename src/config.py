@@ -263,6 +263,20 @@ DEFAULTS: dict[str, Any] = {
         # nineteen training conditions. The bottleneck this was meant to remove IS the
         # regularisation, and capacity was not what the model was short of.
         "direct_gene_term": False,
+        # Start u's per-perturbation term at a ridge fit of the LOG FOLD CHANGES, so the
+        # untrained model is "the control scaled by measured fold changes" instead of the
+        # control itself. Needs direct_gene_term.
+        #
+        # This is C1's fallback, and it is here because C1 was refuted: with random
+        # initialisation the model ties ridge on norman (1.5630 against 1.5473, 0.6
+        # standard errors) and beats nobody but ridge on ComboSciPlex. scDFM and CellFlow
+        # ran into the same wall. The additive structure is not reliably recovered by
+        # gradient descent in this task, and a paper that uses this has to say so.
+        #
+        # NOT the additive weights. mu = x exp(u) + softplus(v) cannot represent x + w
+        # for negative w - that is why it cannot emit a negative cell - so the
+        # multiplicative counterpart, a log fold change, is what gets fitted.
+        "init_from_ridge": False,
         # Stage 2 - the Koopman operators and their anticommutator. Off while the decoder
         # is being established, because it already sees the summed embedding and can
         # represent an interaction: running both lets two terms explain one quantity,

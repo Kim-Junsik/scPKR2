@@ -123,8 +123,20 @@ def build_model(config: dict, data, stats, fold: dict, method: str, device: str)
     # The ceiling is a FLOOR ON q, not a cap on the magnitude - see modulation.py. Same
     # leak surface as `rows` already defines, so a held-out condition cannot raise it.
     ceiling = torch.from_numpy(cells.max(axis=0).astype(np.float32))
+    log_ratio = None
+    if config["model"].get("init_from_ridge"):
+        if not config["model"].get("direct_gene_term"):
+            raise ValueError(
+                "model.init_from_ridge needs model.direct_gene_term: the fitted fold "
+                "changes are per perturbation, and without that term there is nowhere "
+                "to put them.")
+        # Same training conditions as every other fit here, so the leak surface does not
+        # change by turning this on.
+        log_ratio = baselines.fit_ridge_log_ratio(
+            stats, train_conditions, data.perturbations,
+            alpha=float(config["model"]["additive_alpha"]))["u"]
     model = PathwayModulation(config, observables, data.n_perturbations,
-                              detection, dispersion, ceiling).to(device)
+                              detection, dispersion, ceiling, log_ratio).to(device)
     model.head.realisation = str(config["eval"].get("realisation", "gamma"))
     return model, train_conditions, rows
 

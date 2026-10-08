@@ -47,7 +47,8 @@ class PerturbationModulation(nn.Module):
     def __init__(self, config: dict, observable_dim: int, n_genes: int,
                  n_perturbations: int, detection: torch.Tensor | None = None,
                  dispersion: torch.Tensor | None = None,
-                 ceiling: torch.Tensor | None = None):
+                 ceiling: torch.Tensor | None = None,
+                 log_ratio=None):
         super().__init__()
         cfg = config["model"]
         width = int(cfg["decoder_width"])
@@ -80,6 +81,12 @@ class PerturbationModulation(nn.Module):
         if self.direct:
             self.u_direct = nn.Parameter(torch.zeros(int(n_perturbations), n_genes))
             self.v_direct = nn.Parameter(torch.zeros(int(n_perturbations), n_genes))
+            if log_ratio is not None:
+                # The untrained model becomes the control scaled by measured fold
+                # changes rather than the control itself. It is a starting point, and
+                # the term stays learnable from there.
+                with torch.no_grad():
+                    self.u_direct.copy_(torch.as_tensor(log_ratio, dtype=torch.float32))
 
         self.trunk = nn.Sequential(
             nn.Linear(observable_dim + int(cfg["embed_dim"]), width), nn.SiLU(),

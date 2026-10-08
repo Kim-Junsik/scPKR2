@@ -94,9 +94,21 @@ def verify_premise(model, data, stats, conditions: list[str], log,
             flipped = model(control, list(reversed(perturbations)))["mean"]
             worst_order = max(worst_order, float((mu - flipped).abs().max()))
 
-    log(f"  premise: min mu {worst_negative:.2e}, untrained prediction equals the "
-        f"control plus softplus(v)={offset:.2e} to {worst_control:.2e}, "
-        f"order-invariant to {worst_order:.2e}")
+    # With model.init_from_ridge the untrained model is the control scaled by fitted
+    # fold changes, so it is NOT the control and must not be asserted to be. The other
+    # two claims - non-negativity and order invariance - hold either way and are the
+    # ones that matter.
+    from_ridge = bool(model.modulation.direct
+                      and float(model.modulation.u_direct.abs().max()) > 0)
+    log(f"  premise: min mu {worst_negative:.2e}, "
+        + (f"started from a ridge fit of the log fold changes, so it is the control "
+           f"scaled rather than the control ({worst_control:.3f} away), "
+           if from_ridge else
+           f"untrained prediction equals the control plus softplus(v)={offset:.2e} "
+           f"to {worst_control:.2e}, ")
+        + f"order-invariant to {worst_order:.2e}")
+    if from_ridge:
+        worst_control = 0.0
     if worst_negative < 0.0:
         raise SystemExit(
             f"mu went negative ({worst_negative:.3e}). x exp(u) + softplus(v) cannot do "
