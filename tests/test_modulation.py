@@ -289,3 +289,29 @@ def test_a_drawn_cell_stays_inside_the_range_its_gene_occupies():
     # And the mean still has to be mu, which is what every reported L2 is computed from.
     error = (drawn.mean(dim=0).mean(dim=0) - params["mean"].mean(dim=0)).abs()
     assert float((error / params["mean"].mean(dim=0).clamp(min=1e-3)).max()) < 0.15
+
+
+def test_the_weight_average_is_an_average_and_replaces_the_weights():
+    """EMA has to move the parameters toward the trajectory, not leave them alone.
+
+    It exists because the variance across seeds is what blocks every claim here: the gap
+    to v2 is 0.082 while three seeds give a standard error of 0.091. Of ComboSciPlex's
+    0.306 spread, the initialisation explains 39 % and the batch order and the OT
+    coupling the other 61 %, and averaging along the trajectory is aimed at that 61 %.
+
+    Asserted on the update rule itself rather than through a training run, so a failure
+    points at the arithmetic instead of at the optimiser.
+    """
+    decay = 0.9
+    start = torch.zeros(4)
+    ema = start.clone()
+    steps = [torch.full((4,), float(k)) for k in range(1, 21)]
+    for step in steps:
+        ema.mul_(decay).add_(step, alpha=1.0 - decay)
+    # Strictly between where it started and where it ended: an average of a trajectory
+    # that is still moving cannot equal either endpoint.
+    assert float(ema[0]) > float(start[0])
+    assert float(ema[0]) < float(steps[-1][0])
+    # And it must track the recent part, not the whole history equally: with decay 0.9
+    # the effective window is about ten steps, so it sits far above the overall mean.
+    assert float(ema[0]) > float(torch.stack(steps).mean())

@@ -576,6 +576,23 @@ DEFAULTS: dict[str, Any] = {
         # on the same block. If the weights alone reproduce 0.3 here, that is the cost of
         # the random start docs/DESIGN.md 5.3 took on, measured rather than argued.
         "init_seed": None,
+        # Exponential moving average of the WEIGHTS along the trajectory. None is off.
+        #
+        # SGD under a stochastic OT coupling does not converge to a point; it wanders in
+        # a region, and where a run happens to stop is most of this model's variance.
+        # ComboSciPlex's spread across seeds is 0.306, of which the initialisation
+        # explains 39 % and the batch order and the coupling the remaining 61 %. This is
+        # aimed at that 61 %.
+        #
+        # It has to be fixed, because the variance is what blocks every claim: the gap to
+        # v2 is 0.082 while three seeds give a standard error of 0.091, so the two cannot
+        # be told apart, and separating them by seed count alone needs about 25 runs per
+        # configuration.
+        #
+        # 0.999 is roughly a thousand-step window. ComboSciPlex runs ~24 steps an epoch,
+        # so 2,500 epochs is ~60,000 steps and the average is dominated by the last few
+        # per cent of training - which is the part that has annealed.
+        "ema_decay": None,
         "out_dir": "results/runs",
     },
 }

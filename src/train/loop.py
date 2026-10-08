@@ -133,6 +133,15 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
 
     optimiser = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]),
                                   weight_decay=float(train_cfg["weight_decay"]))
+    # The average of the weights along the trajectory, not of their gradients. None
+    # turns it off and the run behaves exactly as before.
+    ema_decay = train_cfg["ema_decay"]
+    ema = None
+    if ema_decay is not None:
+        ema_decay = float(ema_decay)
+        ema = {name: parameter.detach().clone()
+               for name, parameter in model.named_parameters()}
+
     scheduler = None
     if train_cfg["lr_cosine"]:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -238,6 +247,17 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                                                float(train_cfg["grad_clip"]))
             optimiser.step()
             totals["loss"].append(float(loss))
+            if ema is not None:
+                # One step of the average, after the parameters have moved. SGD with a
+                # stochastic coupling does not converge to a point, it wanders in a
+                # region, and which point in that region a run stops at is most of the
+                # variance measured here: ComboSciPlex's spread across seeds is 0.306,
+                # of which the initialisation explains 39 % and the batch order and the
+                # OT plan the rest. Averaging over the trajectory is aimed at that 61 %.
+                with torch.no_grad():
+                    for name, parameter in model.named_parameters():
+                        ema[name].mul_(ema_decay).add_(parameter.detach(),
+                                                       alpha=1.0 - ema_decay)
 
         if scheduler is not None:
             scheduler.step()
@@ -273,6 +293,15 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
             torch.save({"model": model.state_dict(), "config": config,
                         "epoch": epoch + 1},
                        os.path.join(run_dir, f"checkpoint_e{epoch + 1:05d}.pt"))
+
+    if ema is not None:
+        # The averaged weights REPLACE the final ones, so everything downstream - the
+        # checkpoint, the evaluation, the export - sees one model and there is no
+        # question of which was reported.
+        with torch.no_grad():
+            for name, parameter in model.named_parameters():
+                parameter.copy_(ema[name])
+        log(f"  weights replaced by their EMA (decay {ema_decay})")
 
     log(f"  trained in {time.time() - started:.1f}s")
     return parts
