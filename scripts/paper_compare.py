@@ -70,7 +70,12 @@ TABLES = {
  ("scPKR (v2)",
                 [2.2804, 0.00530, 0.03303, 0.8021, 0.8368, 0.8571, MISSING, MISSING]),
  ("scPKR2 (ours)",
-                [1.5129, 0.00267, 0.01845, 0.9298, 0.9335, 0.8980, MISSING, MISSING]),
+                # WITHDRAWN. Every figure here came from c1_combo_long, which was a
+                # lucky draw under a code state that no longer exists: the same seed
+                # scores 1.8070 now, and three seeds average 1.7713 +/- 0.031. The row
+                # is re-measured before it is quoted again.
+                [MISSING, MISSING, MISSING, MISSING, MISSING, MISSING,
+                 MISSING, MISSING]),
 ],
 }
 
@@ -87,7 +92,7 @@ TABLES = {
 # 0.697 above the mean it stated on this block, so a table had to pick a gate per column
 # and explain the gap. Here the two agree to 0.023 - soft 1.4900 against sample 1.5129 -
 # and the choice stops mattering.
-OURS = {"Table 3  ComboSciPlex": (1.4900, 1.8577)}
+OURS = {}  # withdrawn with the row above; see docs/FINDINGS.md section 4
 
 SOFT_L2 = {"Table 1  Norman additive split": 1.5608,
            "Table 2  Norman holdout split - Single": 1.4136,
