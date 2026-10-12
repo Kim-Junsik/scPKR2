@@ -5,7 +5,8 @@ not reproducible from this repository - nothing here can recompute them. They li
 source so that a table can be redrawn without the screenshots, which is how they were
 lost once already.
 
-scPKR's row is v2's, measured and frozen at 20a24c3: scripts/paper_table.py over its
+(v2's row was removed from this copy; it is not a comparison target here.)
+scPKR's row WAS v2's, measured and frozen at 20a24c3: scripts/paper_table.py over its
 runs, the sample gate with the gamma realisation at 4,096 cells, so its L2 and the
 five cell-eval columns beside it come from one prediction rather than two. The mean
 that model states - the soft gate, which is what an L2 between means asks for - is
@@ -35,8 +36,11 @@ TABLES = {
  ("STATE",     [17.3330, 0.30059, 0.24705, 0.5288, -0.0108,  0.5135, -0.0069,  0.2515]),
  ("scDFM",      [1.7043, 0.00315, 0.02155, 0.5705,  0.8853,  0.9737,  0.8468,  0.9260]),
  ("CellFlow",   [1.7064, 0.00392, 0.02207, 0.5503,  0.8678,  0.9321,  0.8395,  0.8988]),
- ("scPKR (v2)",
-                [1.6515, 0.00395, 0.02239, 0.5210,  0.8740,  0.9419, MISSING, MISSING]),
+ # Five folds by three seeds, 500 epochs, the sample gate with the Beta draw and the
+ # per-cell mean bounded at its gene's training maximum - one prediction for all six
+ # columns. The soft-gate L2 under the same bound is 1.6439, 0.002 away.
+ ("scPKR2 (ours)",
+                [1.6460, 0.00386, 0.02281, 0.4200,  0.8805,  0.9639, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Single": [
  ("Control",    [2.6834, 0.0095, 0.0263, NA,      NA,     0.5217,  0.1618,  0.1982]),
@@ -47,8 +51,6 @@ TABLES = {
  ("STATE",     [18.2543, 0.3333, 0.2693,  0.6116, 0.0004, 0.5236,  0.0154,  0.2386]),
  ("scDFM",      [1.6186, 0.0030, 0.0190,  0.6957, 0.7127, 0.8914,  0.6659,  0.8116]),
  ("CellFlow",   [1.6758, 0.0035, 0.0191,  0.2860, 0.7109, 0.8072,  0.6138,  0.6753]),
- ("scPKR (v2)",
-                [1.4610, 0.00308, 0.01663, 0.5190, 0.7325, 0.8984, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Double": [
  ("Control",    [4.1882, 0.0207, 0.0423, NA,      NA,     0.5322, -0.1303, -0.0265]),
@@ -59,16 +61,12 @@ TABLES = {
  ("STATE",     [18.4458, 0.3404, 0.2733,  0.4071, 0.0061, 0.5289, -0.0023,  0.2580]),
  ("scDFM",      [2.0309, 0.0047, 0.0235,  0.5676, 0.8357, 0.9189,  0.7769,  0.8688]),
  ("CellFlow",   [2.1042, 0.0049, 0.0236,  0.5074, 0.8095, 0.8622,  0.6780,  0.7155]),
- ("scPKR (v2)",
-                [2.0458, 0.00576, 0.02580, 0.5130, 0.8215, 0.8592, MISSING, MISSING]),
 ],
 "Table 3  ComboSciPlex": [
  ("Control",    [5.3716, 0.0324, 0.0698, NA,      NA,     0.5714, MISSING, MISSING]),
  ("scGPT",      [1.6934, 0.0031, 0.0251, -0.1261, 0.8322, 0.8571, MISSING, MISSING]),
  ("CPA",        [1.6592, 0.0029, 0.0240,  0.7906, 0.8150, 0.8980, MISSING, MISSING]),
  ("scDFM",      [1.6567, 0.0028, 0.0220,  0.8289, 0.8933, 0.8776, MISSING, MISSING]),
- ("scPKR (v2)",
-                [2.2804, 0.00530, 0.03303, 0.8021, 0.8368, 0.8571, MISSING, MISSING]),
  ("scPKR2 (ours)",
                 # WITHDRAWN. Every figure here came from c1_combo_long, which was a
                 # lucky draw under a code state that no longer exists: the same seed
@@ -94,10 +92,7 @@ TABLES = {
 # and the choice stops mattering.
 OURS = {}  # withdrawn with the row above; see docs/FINDINGS.md section 4
 
-SOFT_L2 = {"Table 1  Norman additive split": 1.5608,
-           "Table 2  Norman holdout split - Single": 1.4136,
-           "Table 2  Norman holdout split - Double": 1.9761,
-           "Table 3  ComboSciPlex": 1.5836}
+SOFT_L2 = {}  # v2's soft-gate L2; dropped with its rows
 
 
 def _rank(rows: list, j: int) -> tuple:
