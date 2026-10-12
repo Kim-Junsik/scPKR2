@@ -51,14 +51,14 @@ def ridge_l2(data, stats, train_conditions, conditions, genes, alpha):
                                        alpha=alpha)
     index, weights = fit["index"], fit["w"]
     control = stats.mean[data.control_condition][genes]
-    scores = []
+    scores = {}
     for condition in conditions:
         targets = list(data.naming.genes(condition))
         if any(g not in index for g in targets):
             continue
         shift = sum(weights[index[g]][genes] for g in targets)
-        scores.append(float(np.linalg.norm(control + shift
-                                           - stats.mean[condition][genes])))
+        scores[condition] = float(np.linalg.norm(control + shift
+                                                 - stats.mean[condition][genes]))
     return scores
 
 
@@ -75,6 +75,11 @@ def main() -> None:
     parser.add_argument("--ridge-alpha", type=float, default=1.0)
     parser.add_argument("--group", default="all",
                         choices=["double", "single", "all"])
+    parser.add_argument("--per-condition", action="store_true",
+                        help="also print each held-out condition, averaged over the "
+                             "runs given. A block mean hides which conditions carry "
+                             "the error - on ComboSciPlex seven conditions make the "
+                             "whole number, two of them single drugs never seen alone.")
     args = parser.parse_args()
 
     print("")
@@ -88,6 +93,7 @@ def main() -> None:
     # fold by how many held-out conditions it happens to have, while the protocol is a
     # mean over folds.
     ridge_folds, model_folds = [], []
+    by_condition: dict[str, dict[str, list[float]]] = {}
     for run_dir in args.run_dirs:
         config, data, stats, fold, model = load_run(run_dir, args.device, args.gate)
         rng = np.random.default_rng(config["eval"]["seed"])
@@ -106,8 +112,14 @@ def main() -> None:
         rows = measure_transport(model, data, stats, conditions, config, rng,
                                  args.device, args.n_cells, genes=genes)
         this_model = float(np.mean([r["l2"] for r in rows]))
-        this_ridge = float(np.mean(ridge_l2(data, stats, train_conditions, conditions,
-                                            genes, args.ridge_alpha)))
+        ridge_scores = ridge_l2(data, stats, train_conditions, conditions, genes,
+                                args.ridge_alpha)
+        this_ridge = float(np.mean(list(ridge_scores.values())))
+        for r in rows:
+            entry = by_condition.setdefault(r["condition"], {"model": [], "ridge": []})
+            entry["model"].append(r["l2"])
+            if r["condition"] in ridge_scores:
+                entry["ridge"].append(ridge_scores[r["condition"]])
         ridge_folds.append(this_ridge)
         model_folds.append(this_model)
         print(f"  {name:34s} {this_ridge:8.4f} {this_model:8.4f} "
@@ -127,6 +139,22 @@ def main() -> None:
         print("  One fold only, and the folds are not equally hard: ridge scores 1.5473")
         print("  on norman additive fold 0 against 1.6690 over all five. A direction,")
         print("  not a verdict.")
+    if args.per_condition:
+        print("")
+        print(f"  {'condition':34s} {'ridge':>8s} {'model':>8s} {'diff':>8s}  runs")
+        print("  " + "-" * 66)
+        ordered = sorted(by_condition.items(),
+                         key=lambda kv: np.mean(kv[1]["model"])
+                         - (np.mean(kv[1]["ridge"]) if kv[1]["ridge"] else 0.0))
+        for condition, entry in ordered:
+            model_score = float(np.mean(entry["model"]))
+            if entry["ridge"]:
+                ridge_score = float(np.mean(entry["ridge"]))
+                print(f"  {str(condition)[:34]:34s} {ridge_score:8.4f} {model_score:8.4f} "
+                      f"{model_score - ridge_score:+8.4f}  {len(entry['model'])}")
+            else:
+                print(f"  {str(condition)[:34]:34s} {'-':>8s} {model_score:8.4f} "
+                      f"{'-':>8s}  {len(entry['model'])}")
     if args.gate != "soft":
         print("")
         print(f"  gate is {args.gate!r}: this puts drawn cells against a mean vector.")
