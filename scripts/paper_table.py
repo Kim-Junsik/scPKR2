@@ -57,7 +57,8 @@ NOT_COMPUTABLE = ["Pears_dhat", "Pears_dhat20"]
 
 def celleval_means(run_dir: str, gate: str | None = None,
                    group: str = "double",
-                   calibration: str | None = None) -> dict[str, str] | None:
+                   calibration: str | None = None,
+                   bounded: bool = False) -> dict[str, str] | None:
     """Reads the scoring produced under the SAME gate the L2 pass will use.
 
     run_celleval.py writes to celleval_<gate>[_a<alpha>]/, and the name is built by
@@ -76,7 +77,8 @@ def celleval_means(run_dir: str, gate: str | None = None,
     The two agree exactly when nothing is filtered: checked on an additive run,
     all five metrics identical to 1e-16.
     """
-    path = os.path.join(run_dir, celleval_dir(gate, calibration), "results.csv")
+    path = os.path.join(run_dir, celleval_dir(gate, calibration, bounded),
+                        "results.csv")
     if not os.path.exists(path):
         return None
     # celleval labels a double 'A+B' and a single 'A' (celleval.to_celleval_label),
@@ -108,7 +110,7 @@ def celleval_means(run_dir: str, gate: str | None = None,
 def compute_l2(run_dir: str, device: str, n_cells: int, gate: str | None = None,
                infer_top_gene: int | None = None, group: str = "double",
                calibration: str | None = None,
-               realisation: str = "beta") -> float:
+               realisation: str = "beta", bounded: bool = False) -> float:
     """Eq. (15) over the fold's test doubles - the same conditions resid_R2 uses.
 
     `infer_top_gene` restricts the gene space to the subset scDFM scores on, which
@@ -122,8 +124,9 @@ def compute_l2(run_dir: str, device: str, n_cells: int, gate: str | None = None,
     if gate == "sample":
         # Matched to what run_celleval.py exported with, so the L2 in a row and the
         # cell-eval columns beside it come from the same prediction.
-        overrides["cap_realisation"] = True
         overrides["realisation"] = realisation
+    if bounded:
+        overrides["bound_mean"] = True
     config, data, stats, fold, model = load_run(run_dir, device, gate,
                                                 eval_overrides=overrides)
     rng = np.random.default_rng(config["eval"]["seed"])
@@ -179,6 +182,8 @@ def main() -> None:
                              "default is kept equal to that script's so the two cannot "
                              "silently disagree - they did once, and a change that did "
                              "nothing looked like a change that did not work")
+    parser.add_argument("--bound-mean", action="store_true",
+                        help="must match what run_celleval.py exported with")
     parser.add_argument("--calibration", default=None, metavar="C,P",
                         help="the per-condition residual scale this table reports, "
                              "c,p for s = clip(c ||r||^-p, 0, s_max). It is applied to "
@@ -215,11 +220,12 @@ def main() -> None:
     table = []
     for run_dir in runs:
         name = os.path.basename(run_dir.rstrip("/\\"))
-        values = celleval_means(run_dir, args.gate, args.group, args.calibration)
+        values = celleval_means(run_dir, args.gate, args.group, args.calibration,
+                                args.bound_mean)
         l2 = (float("nan") if args.no_l2 else
               compute_l2(run_dir, args.device, args.n_cells, args.gate,
                          args.infer_top_gene, args.group, args.calibration,
-                         args.realisation))
+                         args.realisation, args.bound_mean))
 
         cells = [f"{l2:12.4f}" if np.isfinite(l2) else f"{'-':>12s}"]
         record = {"run": name, "L2": l2}

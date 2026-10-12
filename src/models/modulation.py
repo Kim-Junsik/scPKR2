@@ -77,6 +77,26 @@ class PerturbationModulation(nn.Module):
         # model it was. Reading it as cfg["..."] would raise, and defaulting it to True
         # would add two parameters load_state_dict cannot find - the same failure the
         # whitener buffer caused in v2 and turn_on_init caused here an hour ago.
+        # mu <= the gene's training maximum, per cell. Read with .get(False) so a run
+        # trained before this existed rebuilds as it was; eval.bound_mean can still
+        # switch it on for such a run when it is scored.
+        #
+        # WHY. Every norman export was refused by cell-eval: min 0.0000, max 16.51 to
+        # 29.77 against a limit of 15. x * exp(u) cannot move a cell that sits at zero,
+        # so to raise a gene's MEAN it multiplies the cells already expressing it, up to
+        # exp(log_factor_max) = 20: VIM at 31.07 where it tops out at 4.95, AVP at 71.91
+        # against 6.17. The mean is right and those cells are not cells. A cell's
+        # expected expression cannot exceed the largest value its gene ever takes, so the
+        # bound is a statement about the data and one number per gene, not a tuned cap.
+        #
+        # THE WHOLE MEAN, not only the multiplicative term. Stopping x * exp(u) alone
+        # still left 9.10 to 14.55, because softplus(v) carries means above the range
+        # too, and 14.55 is one unlucky seed from the limit.
+        #
+        # It is NOT free, and the cost is measured rather than assumed: stopping the
+        # multiplicative term alone moves L2 by -0.010 to +0.023 across the five folds,
+        # +0.007 on average.
+        self.bound_mean = bool(cfg.get("bound_mean", False))
         self.direct = bool(cfg.get("direct_gene_term", False))
         if self.direct:
             self.u_direct = nn.Parameter(torch.zeros(int(n_perturbations), n_genes))
@@ -182,6 +202,8 @@ class PerturbationModulation(nn.Module):
         # 1e9 and the run is lost rather than merely wrong.
         u = (self.to_u(h) + u_add).clamp(-self.log_factor_max, self.log_factor_max)
         mean = x * torch.exp(u) + torch.nn.functional.softplus(self.to_v(h) + v_add)
+        if self.bound_mean:
+            mean = torch.minimum(mean, self.ceiling.expand_as(mean))
         q = torch.sigmoid(self.to_q(h)).clamp(1e-3, 1.0 - 1e-6)
         # mu / q <= ceiling, enforced on q so the mean survives it.
         q = torch.maximum(q, (mean / self.ceiling).clamp(max=1.0 - 1e-6))

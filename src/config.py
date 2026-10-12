@@ -161,6 +161,10 @@ DEFAULTS: dict[str, Any] = {
         # 15. clamped_gaussian is what training's likelihood assumes and biases the mean
         # upward; it exists to reproduce v2's number and for nothing else.
         "realisation": "beta",
+        # None follows the run's own model.bound_mean. True or False forces it when a
+        # run is SCORED, which is how a checkpoint trained without the bound can be
+        # evaluated and exported with it.
+        "bound_mean": None,
         # Lower bound on the hurdle's detection probability, at inference. None keeps
         # whatever the run was trained with (1e-2). It bounds a realised magnitude at
         # Global magnitude correction applied AFTER decoding (predict.fit_alpha).
@@ -262,6 +266,9 @@ DEFAULTS: dict[str, Any] = {
         # perturbations x 5,000 genes x 2 terms is 170,000 free parameters against
         # nineteen training conditions. The bottleneck this was meant to remove IS the
         # regularisation, and capacity was not what the model was short of.
+        # Bound the per-cell mean at its gene's training maximum. See modulation.py for
+        # the measurement behind it. Off until its cost on the five-fold L2 is known.
+        "bound_mean": False,
         "direct_gene_term": False,
         # Start u's per-perturbation term at a ridge fit of the LOG FOLD CHANGES, so the
         # untrained model is "the control scaled by measured fold changes" instead of the

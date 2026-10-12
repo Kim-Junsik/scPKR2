@@ -315,3 +315,50 @@ def test_the_weight_average_is_an_average_and_replaces_the_weights():
     # And it must track the recent part, not the whole history equally: with decay 0.9
     # the effective window is about ten steps, so it sits far above the overall mean.
     assert float(ema[0]) > float(torch.stack(steps).mean())
+
+
+def test_the_bounded_mean_stays_inside_the_range_its_gene_occupies():
+    """With model.bound_mean, no cell is predicted above what its gene ever reaches.
+
+    Every norman export was refused by cell-eval at 16.51 to 29.77 against a limit of 15.
+    x * exp(u) cannot move a cell that is at zero, so to raise a gene's MEAN it multiplies
+    the cells already expressing it by up to exp(log_factor_max) = 20 - VIM predicted at
+    31.07 where it tops out at 4.95. The bound is on the whole mean, because stopping the
+    multiplicative term alone still left 9.10 to 14.55 through softplus(v).
+
+    The second half matters as much: with the mean inside the range, the q floor and the
+    Beta support need no widening, so a DRAWN cell is inside it too.
+    """
+    cells = control_cells()
+    ceiling = cells.max(dim=0).values.clamp(min=1e-3)
+    config = config_module.load(["model.bound_mean=true", "model.hurdle_gate=sample",
+                                 "eval.realisation=beta"])
+    torch.manual_seed(0)
+    model = PathwayModulation(config, FakeObservables(), N_PERTURBATIONS,
+                              ceiling=ceiling).eval()
+    with torch.no_grad():
+        # Upward this time: large positive u and v are what produced the out-of-range
+        # means, so pushing downward as the other tests do would prove nothing here.
+        for layer in (model.modulation.to_u, model.modulation.to_v):
+            layer.weight.normal_(0.0, 5.0)
+            layer.bias.fill_(5.0)
+        params = model(cells, [1, 3])
+        drawn = torch.stack([model.head.point_estimate(params) for _ in range(50)])
+    assert float(params["mean"].min()) >= 0.0
+    assert float((params["mean"] - ceiling).max()) <= 1e-5
+    assert float((drawn - ceiling * 1.001).max()) <= 1e-3
+
+
+def test_the_bound_is_off_unless_asked_for():
+    """A run trained before the bound existed must rebuild as the model it was."""
+    cells = control_cells()
+    ceiling = cells.max(dim=0).values.clamp(min=1e-3)
+    torch.manual_seed(0)
+    model = PathwayModulation(config_module.load([]), FakeObservables(), N_PERTURBATIONS,
+                              ceiling=ceiling).eval()
+    with torch.no_grad():
+        for layer in (model.modulation.to_u, model.modulation.to_v):
+            layer.weight.normal_(0.0, 5.0)
+            layer.bias.fill_(5.0)
+        mean = model(cells, [1, 3])["mean"]
+    assert float((mean - ceiling).max()) > 1.0

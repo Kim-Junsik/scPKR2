@@ -75,6 +75,9 @@ def main() -> None:
     parser.add_argument("--ridge-alpha", type=float, default=1.0)
     parser.add_argument("--group", default="all",
                         choices=["double", "single", "all"])
+    parser.add_argument("--bound-mean", action="store_true",
+                        help="score with the per-cell mean bounded at its gene's "
+                             "training maximum, whatever the run was trained with")
     parser.add_argument("--per-condition", action="store_true",
                         help="also print each held-out condition, averaged over the "
                              "runs given. A block mean hides which conditions carry "
@@ -84,7 +87,8 @@ def main() -> None:
 
     print("")
     print(f"{args.group} held-out conditions, gate={args.gate}, "
-          f"{args.n_cells} cells, {args.infer_top_gene} genes")
+          f"{args.n_cells} cells, {args.infer_top_gene} genes"
+          + (", mean bounded" if args.bound_mean else ""))
     print("")
     print(f"  {'run':34s} {'ridge':>8s} {'model':>8s} {'diff':>8s}  n")
     print("  " + "-" * 64)
@@ -95,7 +99,9 @@ def main() -> None:
     ridge_folds, model_folds = [], []
     by_condition: dict[str, dict[str, list[float]]] = {}
     for run_dir in args.run_dirs:
-        config, data, stats, fold, model = load_run(run_dir, args.device, args.gate)
+        config, data, stats, fold, model = load_run(
+            run_dir, args.device, args.gate,
+            eval_overrides={"bound_mean": True} if args.bound_mean else None)
         rng = np.random.default_rng(config["eval"]["seed"])
         genes = scdfm_eval_genes(data, fold, args.infer_top_gene)
         groups = condition_groups(data, stats, fold, config["split"]["method"])

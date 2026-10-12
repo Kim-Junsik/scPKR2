@@ -187,7 +187,8 @@ if __name__ == "__main__":
 '''
 
 
-def celleval_dir(gate: str | None, variant: str | None) -> str:
+def celleval_dir(gate: str | None, variant: str | None,
+                 bounded: bool = False) -> str:
     """The export folder for one (gate, variant) reading of a checkpoint.
 
     scripts/paper_table.py imports THIS function rather than rebuilding the name,
@@ -204,6 +205,10 @@ def celleval_dir(gate: str | None, variant: str | None) -> str:
     if variant and variant != "none":
         safe = str(variant).replace(",", "p").replace(".", "")
         name = f"{name}_c{safe}"
+    # A bounded export holds different cells from an unbounded one of the same run, so it
+    # gets its own folder for the same reason a different gate does.
+    if bounded:
+        name = f"{name}_bounded"
     return name
 
 
@@ -251,6 +256,11 @@ def main() -> None:
                              "reached 62.88 against cell-eval's limit of 15. "
                              "clamped_gaussian is what training assumes and biases the "
                              "mean upward; it reproduces v2's number and nothing else.")
+    parser.add_argument("--bound-mean", action="store_true",
+                        help="export with the per-cell mean bounded at its gene's "
+                             "training maximum. Without it this model's norman exports "
+                             "reach 16.51 to 29.77 and cell-eval, whose limit is 15, "
+                             "refuses them")
     parser.add_argument("--calibration", default=None, metavar="C,P",
                         help="the per-condition residual scale s = clip(c ||r||^-p, 0, "
                              "s_max), as `dev_rule.py --fit-all` fitted it on the "
@@ -273,12 +283,16 @@ def main() -> None:
     if args.gate == "sample":
         calibration = dict(calibration or {})
         calibration["realisation"] = args.realisation
+    if args.bound_mean:
+        calibration = dict(calibration or {})
+        calibration["bound_mean"] = True
 
     # The gate AND the calibration go in the folder name. Both change the predictions
     # this export holds, so an export made under one must never overwrite an export made
     # under another - that would destroy the uncalibrated baseline the calibrated run is
     # being compared against, silently.
-    out_dir = os.path.join(args.run_dir, celleval_dir(args.gate, args.calibration))
+    out_dir = os.path.join(args.run_dir, celleval_dir(args.gate, args.calibration,
+                                                      args.bound_mean))
     interpreter = None
     if not args.export_only:
         # Resolved and probed BEFORE the export, so a broken environment costs

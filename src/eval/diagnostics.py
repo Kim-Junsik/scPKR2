@@ -138,6 +138,9 @@ def build_model(config: dict, data, stats, fold: dict, method: str, device: str)
     model = PathwayModulation(config, observables, data.n_perturbations,
                               detection, dispersion, ceiling, log_ratio).to(device)
     model.head.realisation = str(config["eval"].get("realisation", "gamma"))
+    forced = config["eval"].get("bound_mean")
+    if forced is not None:
+        model.modulation.bound_mean = bool(forced)
     return model, train_conditions, rows
 
 
