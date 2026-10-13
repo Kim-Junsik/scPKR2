@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 import numpy as np
@@ -97,6 +98,7 @@ def main() -> None:
     # fold by how many held-out conditions it happens to have, while the protocol is a
     # mean over folds.
     ridge_folds, model_folds = [], []
+    by_arm: dict[str, list[tuple[float, float]]] = {}
     by_condition: dict[str, dict[str, list[float]]] = {}
     for run_dir in args.run_dirs:
         config, data, stats, fold, model = load_run(
@@ -128,6 +130,9 @@ def main() -> None:
                 entry["ridge"].append(ridge_scores[r["condition"]])
         ridge_folds.append(this_ridge)
         model_folds.append(this_model)
+        # Runs that differ only in their seed share a name up to the trailing _s<n>.
+        arm = re.sub(r"_s\d+$", "", os.path.basename(os.path.normpath(run_dir)))
+        by_arm.setdefault(arm, []).append((this_ridge, this_model))
         print(f"  {name:34s} {this_ridge:8.4f} {this_model:8.4f} "
               f"{this_model - this_ridge:+8.4f}  {len(conditions)}")
 
@@ -145,6 +150,19 @@ def main() -> None:
         print("  One fold only, and the folds are not equally hard: ridge scores 1.5473")
         print("  on norman additive fold 0 against 1.6690 over all five. A direction,")
         print("  not a verdict.")
+    if len(by_arm) > 1:
+        # When several arms are passed at once the grand mean above mixes them and means
+        # nothing. Each arm's own mean over its seeds is the comparison; the spread is
+        # printed because an arm that wins by less than its seeds disagree has not won.
+        print("")
+        print(f"  {'arm':28s} {'ridge':>8s} {'model':>8s} {'sd':>8s} {'diff':>8s}  seeds")
+        print("  " + "-" * 68)
+        for arm, pairs in by_arm.items():
+            ridge_arm = float(np.mean([r for r, _ in pairs]))
+            scores = np.asarray([m for _, m in pairs])
+            spread = float(scores.std(ddof=1)) if len(scores) > 1 else float("nan")
+            print(f"  {arm[:28]:28s} {ridge_arm:8.4f} {scores.mean():8.4f} {spread:8.4f} "
+                  f"{scores.mean() - ridge_arm:+8.4f}  {len(scores)}")
     if args.per_condition:
         print("")
         print(f"  {'condition':34s} {'ridge':>8s} {'model':>8s} {'diff':>8s}  runs")
