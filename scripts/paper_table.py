@@ -58,7 +58,8 @@ NOT_COMPUTABLE = ["Pears_dhat", "Pears_dhat20"]
 def celleval_means(run_dir: str, gate: str | None = None,
                    group: str = "double",
                    calibration: str | None = None,
-                   bounded: bool = False) -> dict[str, str] | None:
+                   bounded: bool = False,
+                   folder: str | None = None) -> dict[str, str] | None:
     """Reads the scoring produced under the SAME gate the L2 pass will use.
 
     run_celleval.py writes to celleval_<gate>[_a<alpha>]/, and the name is built by
@@ -77,7 +78,7 @@ def celleval_means(run_dir: str, gate: str | None = None,
     The two agree exactly when nothing is filtered: checked on an additive run,
     all five metrics identical to 1e-16.
     """
-    path = os.path.join(run_dir, celleval_dir(gate, calibration, bounded),
+    path = os.path.join(run_dir, folder or celleval_dir(gate, calibration, bounded),
                         "results.csv")
     if not os.path.exists(path):
         return None
@@ -191,6 +192,9 @@ def main() -> None:
                              "default is kept equal to that script's so the two cannot "
                              "silently disagree - they did once, and a change that did "
                              "nothing looked like a change that did not work")
+    parser.add_argument("--baseline", default=None, choices=["control", "additive"],
+                        help="read the cell-eval columns of a reference export made by "
+                             "run_celleval.py --baseline; use with --no-l2")
     parser.add_argument("--bound-mean", action="store_true",
                         help="must match what run_celleval.py exported with")
     parser.add_argument("--calibration", default=None, metavar="C,P",
@@ -233,7 +237,9 @@ def main() -> None:
     for run_dir in runs:
         name = os.path.basename(run_dir.rstrip("/\\"))
         values = celleval_means(run_dir, args.gate, args.group, args.calibration,
-                                args.bound_mean)
+                                args.bound_mean,
+                                f"celleval_baseline_{args.baseline}"
+                                if args.baseline else None)
         l2 = (float("nan") if args.no_l2 else
               compute_l2(run_dir, args.device, args.n_cells, l2_gate,
                          args.infer_top_gene, args.group, args.calibration,

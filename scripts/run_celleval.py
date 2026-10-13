@@ -256,6 +256,15 @@ def main() -> None:
                              "reached 62.88 against cell-eval's limit of 15. "
                              "clamped_gaussian is what training assumes and biases the "
                              "mean upward; it reproduces v2's number and nothing else.")
+    parser.add_argument("--baseline", default=None, choices=["control", "additive"],
+                        help="export a REFERENCE prediction instead of the model's, "
+                             "through the same pipeline: `control` is the control cells "
+                             "unchanged, `additive` is each control cell plus the true "
+                             "single-perturbation shifts, floored at zero. Both are rows "
+                             "of the published tables, so scoring them here says whether "
+                             "this scorer reproduces those rows - which has to be known "
+                             "before a model column from it is compared with them. The "
+                             "run is used only for its data and its fold.")
     parser.add_argument("--bound-mean", action="store_true",
                         help="export with the per-cell mean bounded at its gene's "
                              "training maximum. Without it this model's norman exports "
@@ -293,6 +302,9 @@ def main() -> None:
     # being compared against, silently.
     out_dir = os.path.join(args.run_dir, celleval_dir(args.gate, args.calibration,
                                                       args.bound_mean))
+    if args.baseline:
+        # Its own folder, and no gate in the name: a baseline has none.
+        out_dir = os.path.join(args.run_dir, f"celleval_baseline_{args.baseline}")
     interpreter = None
     if not args.export_only:
         # Resolved and probed BEFORE the export, so a broken environment costs
@@ -328,7 +340,7 @@ def main() -> None:
         if args.gate:
             print(f"hurdle gate overridden: {args.gate}")
         print("loading the run ...")
-        config, data, _stats, fold, model = load_run(
+        config, data, stats, fold, model = load_run(
             args.run_dir, device or torch.load(
                 checkpoint_path, map_location="cpu",
                 weights_only=False)["config"]["train"]["device"],
@@ -346,8 +358,22 @@ def main() -> None:
 
         rng = np.random.default_rng(config["eval"]["seed"])
         print("transporting control cells for every test condition ...")
+        predictor = None
+        if args.baseline == "control":
+            predictor = lambda cells, condition: cells
+        elif args.baseline == "additive":
+            control_mean = stats.mean[data.control_condition]
+
+            def predictor(cells, condition):
+                singles = [stats.single_of(g) for g in data.naming.genes(condition)]
+                if not all(stats.has(s) for s in singles):
+                    return None
+                shift = sum(stats.mean[s] - control_mean for s in singles)
+                # Floored at zero because cell-eval refuses negative log1p values; the
+                # shift itself is the naive additive baseline of the published tables.
+                return np.maximum(cells + shift[None, :], 0.0).astype(np.float32)
         paths = export(model, data, fold, config, out_dir, rng,
-                       args.max_cells, genes)
+                       args.max_cells, genes, predictor)
         print(f"  wrote {paths['pred']} and {paths['real']}  "
               f"({paths['n_cells']} cells, {paths['n_conditions']} conditions, "
               f"{paths['n_genes']} genes)")

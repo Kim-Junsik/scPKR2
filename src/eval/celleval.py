@@ -37,7 +37,8 @@ def to_celleval_label(condition: str, naming) -> str:
 
 def build_pair(model, data, fold: dict, config: dict,
                rng: np.random.Generator, max_cells: int | None = None,
-               genes: np.ndarray | None = None) -> tuple[ad.AnnData, ad.AnnData]:
+               genes: np.ndarray | None = None,
+               predictor=None) -> tuple[ad.AnnData, ad.AnnData]:
     """Predicted and real AnnData over the fold's test conditions plus control.
 
     For every test condition the prediction transports a fresh sample of control
@@ -72,8 +73,18 @@ def build_pair(model, data, fold: dict, config: dict,
         n = real.shape[0]
         pick = rng.choice(control_cells.shape[0], size=n,
                           replace=control_cells.shape[0] < n)
-        predicted = predict_cells(model, control_cells[pick], condition,
-                                  data.pert_index, device, data.naming)
+        # `predictor` swaps the model for a reference prediction - the control itself,
+        # or the true singles added - written through the SAME export, so a published
+        # baseline row can be reproduced by the same scorer before any model column
+        # scored by it is believed. None from it means "cannot be formed for this
+        # condition", and the condition is then left out of both sides.
+        if predictor is not None:
+            predicted = predictor(control_cells[pick], condition)
+            if predicted is None:
+                continue
+        else:
+            predicted = predict_cells(model, control_cells[pick], condition,
+                                      data.pert_index, device, data.naming)
         label = to_celleval_label(condition, data.naming)
         pred_blocks.append(predicted)
         pred_labels += [label] * n
@@ -97,11 +108,11 @@ def build_pair(model, data, fold: dict, config: dict,
 
 def export(model, data, fold: dict, config: dict, out_dir: str,
            rng: np.random.Generator, max_cells: int | None = None,
-           genes: np.ndarray | None = None) -> dict[str, str]:
+           genes: np.ndarray | None = None, predictor=None) -> dict[str, str]:
     import os
     os.makedirs(out_dir, exist_ok=True)
     adata_pred, adata_real = build_pair(model, data, fold, config, rng,
-                                        max_cells, genes)
+                                        max_cells, genes, predictor)
     paths = {"pred": os.path.join(out_dir, "pred.h5ad"),
              "real": os.path.join(out_dir, "real.h5ad")}
     adata_pred.write_h5ad(paths["pred"])
