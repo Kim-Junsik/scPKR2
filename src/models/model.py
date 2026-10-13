@@ -42,6 +42,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from .generator import GeneratorResponse
 from .modulation import PerturbationModulation
 from .realise import HurdleRealisation
 
@@ -58,10 +59,25 @@ class PathwayModulation(nn.Module):
         self.observables = observables
         self.n_genes = len(observables.gene_names)
         self.n_perturbations = int(n_perturbations)
-        self.modulation = PerturbationModulation(
-            config, observables.dim, self.n_genes, n_perturbations,
-            detection=detection, dispersion=dispersion, ceiling=ceiling,
-            log_ratio=log_ratio)
+        # What produces the log-gain and the turn-on. `mlp` is stage 1, a decoder over
+        # the summed embedding. `generator` is stage 2, docs/DESIGN_STAGE2.md: one linear
+        # generator per perturbation on the observables, exponentiated. Read with
+        # .get("mlp") so every run trained before the key existed rebuilds as stage 1.
+        self.response = str(config["model"].get("response", "mlp"))
+        if self.response == "generator":
+            self.modulation = GeneratorResponse(
+                config, observables.dim, self.n_genes, n_perturbations,
+                detection=detection, dispersion=dispersion, ceiling=ceiling)
+        elif self.response == "mlp":
+            self.modulation = PerturbationModulation(
+                config, observables.dim, self.n_genes, n_perturbations,
+                detection=detection, dispersion=dispersion, ceiling=ceiling,
+                log_ratio=log_ratio)
+        else:
+            raise ValueError(f"unknown model.response {self.response!r} "
+                             f"(mlp | generator)")
+        # True when there are generators for the observable-space losses to supervise.
+        self.has_generators = self.response == "generator"
         self.head = HurdleRealisation(config)
 
         # Stage 2. Off here, and the training loop skips its observable-space terms when
@@ -115,8 +131,8 @@ class PathwayModulation(nn.Module):
 
     def additive(self, perturbations: list[int]) -> torch.Tensor:
         """Not a quantity in this model. See the note above."""
-        return torch.zeros(self.n_genes, device=self.modulation.to_u.bias.device,
-                           dtype=self.modulation.to_u.bias.dtype)
+        reference = next(self.parameters())
+        return torch.zeros(self.n_genes, device=reference.device, dtype=reference.dtype)
 
     def observable_displacement(self, x: torch.Tensor,
                                 perturbations: list[int]) -> torch.Tensor:
@@ -153,10 +169,14 @@ class PathwayModulation(nn.Module):
     # ------------------------------------------------------------- bookkeeping
 
     def learned_parameters(self) -> dict[str, int]:
-        counts = {"embedding": int(self.modulation.embedding.weight.numel()),
-                  "decoder": sum(p.numel() for n, p in self.modulation.named_parameters()
-                                 if not n.startswith("embedding")),
-                  "head": sum(p.numel() for p in self.head.parameters())}
+        # Grouped by the module's own top-level names, so stage 1 reports its embedding
+        # and decoder and stage 2 its operators and readouts without this function
+        # knowing which it is looking at.
+        counts: dict[str, int] = {}
+        for name, parameter in self.modulation.named_parameters():
+            group = name.split(".")[0]
+            counts[group] = counts.get(group, 0) + int(parameter.numel())
+        counts["head"] = sum(p.numel() for p in self.head.parameters())
         counts["total"] = sum(counts.values())
         return counts
 

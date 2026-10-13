@@ -230,6 +230,16 @@ DEFAULTS: dict[str, Any] = {
         # nothing told us what that bought - starting large means never learning which
         # part of the capacity was doing the work. These grow only when a measurement
         # says they must.
+        # mlp        stage 1: a decoder over [Phi(x), sum_a e_a] produces the log-gain.
+        # generator  stage 2, docs/DESIGN_STAGE2.md: a linear generator per perturbation
+        #            on the observables, exponentiated, read out as the log-gain.
+        "response": "mlp",
+        # Stage 2's ablation arms (section 7 of that document). The defaults ARE the
+        # model; each of these removes or adds one piece of it.
+        "generator_constant": True,              # False = arm G, no constant observable
+        "generator_linear": False,               # True  = arm C, dp = B p, no exponential
+        "generator_explicit_interaction": False,  # True  = arm F, a learned weight on
+        #                                           the anticommutator beyond exp's own
         "embed_dim": 64,
         "decoder_width": 256,
         # exp(u) is unbounded, so u is not. At 3.0 the multiplicative factor runs over

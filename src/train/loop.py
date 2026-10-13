@@ -189,23 +189,25 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
 
             loss = torch.zeros((), device=device)
 
-            # The observable-space terms supervise the Koopman operators, and stage 1
-            # has none. Running them against a model without operators is not a cheaper
+            # The observable-space terms supervise the generators, and stage 1 has
+            # none. Running them against a model without generators is not a cheaper
             # version of training - there is nothing on the other end of the gradient.
-            if fm_weight > 0 and model.interaction:
+            # With generators they are what makes the operator path a statement about
+            # the observables' dynamics rather than a bottleneck feature.
+            if fm_weight > 0 and model.has_generators:
                 # One t PER SAMPLE. A single scalar for the batch gives the time axis one
                 # sample per step, so [0, 1] is covered sparsely; scPKFM measured the
                 # consequence as a predicted displacement 72 % of the true one.
                 t = torch.rand(p0c.shape[0], 1, device=device)
                 p_t = (1.0 - t) * p0c + t * p1c
                 fm = torch.nn.functional.mse_loss(
-                    model.operators.velocity(p_t, perturbations), p1c - p0c)
+                    model.modulation.velocity(p_t, perturbations), p1c - p0c)
                 loss = loss + fm_weight * fm
                 totals["fm"].append(float(fm))
 
-            if endpoint_weight > 0 and model.interaction:
+            if endpoint_weight > 0 and model.has_generators:
                 end = torch.nn.functional.mse_loss(
-                    model.operators.flow(p0c, perturbations), p1c)
+                    model.modulation.flow(p0c, perturbations), p1c)
                 loss = loss + endpoint_weight * end
                 totals["endpoint"].append(float(end))
 
@@ -308,16 +310,5 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
 
 
 def _scale_report(model, perturbations: list[int]) -> str:
-    """What to watch while this trains.
-
-    |u| is the one to watch: it is clamped at model.log_factor_max, and a run that pins
-    there is asking for a multiplicative factor the clamp will not give it.
-    """
-    with torch.no_grad():
-        embedding = float(model.modulation.embed(perturbations).abs().max())
-        u_bound = float(model.modulation.to_u.weight.abs().max())
-        # The WEIGHT, not the bias. to_v starts at zero weight, so all of the turn-on
-        # term's learning shows up here while the bias barely moves - reading the bias
-        # alone made the term look dead when it was not.
-        v_weight = float(model.modulation.to_v.weight.abs().max())
-    return f"|e| {embedding:.4f}  |Wu| {u_bound:.4f}  |Wv| {v_weight:.4f}"
+    """What to watch while this trains. Each response module knows its own."""
+    return model.modulation.report(perturbations)

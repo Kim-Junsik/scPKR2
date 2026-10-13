@@ -41,6 +41,30 @@ import torch
 from torch import nn
 
 
+def assemble_output(x: torch.Tensor, u: torch.Tensor, v: torch.Tensor,
+                    logit_q: torch.Tensor, ceiling: torch.Tensor, bound_mean: bool,
+                    log_scale: torch.Tensor, log_factor_max: float) -> dict:
+    """(u, v, logit_q) -> mu = x exp(u) + softplus(v), and everything read off it.
+
+    ONE function for both ways of producing u and v - stage 1's decoder and stage 2's
+    generators - so the output form the two are compared on cannot drift apart.
+    """
+    # Bounded, because exp is not. At 3.0 the factor runs over [0.05, 20], which covers
+    # anything log1p expression does; unbounded, one bad step puts exp(u) at 1e9 and the
+    # run is lost rather than merely wrong.
+    u = u.clamp(-log_factor_max, log_factor_max)
+    mean = x * torch.exp(u) + torch.nn.functional.softplus(v)
+    if bound_mean:
+        mean = torch.minimum(mean, ceiling.expand_as(mean))
+    q = torch.sigmoid(logit_q).clamp(1e-3, 1.0 - 1e-6)
+    # mu / q <= ceiling, enforced on q so the mean survives it.
+    q = torch.maximum(q, (mean / ceiling).clamp(max=1.0 - 1e-6))
+    return {"mean": mean, "q": q, "magnitude": mean / q,
+            "ceiling": ceiling.expand_as(mean),
+            "log_scale": log_scale.expand_as(mean).clamp(-6.0, 2.0),
+            "u": u}
+
+
 class PerturbationModulation(nn.Module):
     """e_S -> (u, v, logit_q) -> mu = x exp(u) + softplus(v), and a per-cell q."""
 
@@ -197,17 +221,29 @@ class PerturbationModulation(nn.Module):
                                     device=self.u_direct.device)
             u_add = self.u_direct[index].sum(dim=0)
             v_add = self.v_direct[index].sum(dim=0)
-        # Bounded, because exp is not. At 3.0 the factor runs over [0.05, 20], which
-        # covers anything log1p expression does; unbounded, one bad step puts exp(u) at
-        # 1e9 and the run is lost rather than merely wrong.
-        u = (self.to_u(h) + u_add).clamp(-self.log_factor_max, self.log_factor_max)
-        mean = x * torch.exp(u) + torch.nn.functional.softplus(self.to_v(h) + v_add)
-        if self.bound_mean:
-            mean = torch.minimum(mean, self.ceiling.expand_as(mean))
-        q = torch.sigmoid(self.to_q(h)).clamp(1e-3, 1.0 - 1e-6)
-        # mu / q <= ceiling, enforced on q so the mean survives it.
-        q = torch.maximum(q, (mean / self.ceiling).clamp(max=1.0 - 1e-6))
-        return {"mean": mean, "q": q, "magnitude": mean / q,
-                "ceiling": self.ceiling.expand_as(mean),
-                "log_scale": self.log_scale.expand_as(mean).clamp(-6.0, 2.0),
-                "u": u}
+        return assemble_output(
+            x, self.to_u(h) + u_add, self.to_v(h) + v_add, self.to_q(h),
+            self.ceiling, self.bound_mean, self.log_scale, self.log_factor_max)
+
+    # ------------------------------------------------------------ bookkeeping
+
+    def turn_on_offset(self) -> float:
+        """softplus of v's bias: what an untrained model adds to the control cell."""
+        return float(torch.nn.functional.softplus(self.to_v.bias[0].detach()))
+
+    @property
+    def starts_from_ridge(self) -> bool:
+        return bool(self.direct and float(self.u_direct.detach().abs().max()) > 0)
+
+    def report(self, perturbations: list[int]) -> str:
+        """What to watch while this trains.
+
+        The WEIGHTS, not the bias. to_v starts at zero weight, so all of the turn-on
+        term's learning shows up there while the bias barely moves - reading the bias
+        alone made the term look dead when it was not.
+        """
+        with torch.no_grad():
+            embedding = float(self.embed(perturbations).abs().max())
+            u_weight = float(self.to_u.weight.abs().max())
+            v_weight = float(self.to_v.weight.abs().max())
+        return f"|e| {embedding:.4f}  |Wu| {u_weight:.4f}  |Wv| {v_weight:.4f}"

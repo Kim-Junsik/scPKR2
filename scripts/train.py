@@ -80,10 +80,9 @@ def verify_premise(model, data, stats, conditions: list[str], log,
       ORDER DOES NOT MATTER. e_S is a sum, so A+B and B+A are the same prediction. A
       simultaneous perturbation has no order and no training signal would impose this.
     """
-    device = model.modulation.to_u.bias.device
+    device = next(model.parameters()).device
     control = torch.as_tensor(data.cells(data.control_condition), device=device)[:256]
-    offset = float(torch.nn.functional.softplus(
-        torch.tensor(float(model.modulation.to_v.bias[0]))))
+    offset = model.modulation.turn_on_offset()
     worst_negative, worst_control, worst_order = 0.0, 0.0, 0.0
     for condition in conditions[:8]:
         perturbations = [data.pert_index[g] for g in data.naming.genes(condition)]
@@ -98,8 +97,7 @@ def verify_premise(model, data, stats, conditions: list[str], log,
     # fold changes, so it is NOT the control and must not be asserted to be. The other
     # two claims - non-negativity and order invariance - hold either way and are the
     # ones that matter.
-    from_ridge = bool(model.modulation.direct
-                      and float(model.modulation.u_direct.abs().max()) > 0)
+    from_ridge = model.modulation.starts_from_ridge
     log(f"  premise: min mu {worst_negative:.2e}, "
         + (f"started from a ridge fit of the log fold changes, so it is the control "
            f"scaled rather than the control ({worst_control:.3f} away), "
