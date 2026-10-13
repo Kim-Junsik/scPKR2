@@ -36,13 +36,14 @@ TABLES = {
  ("STATE",     [17.3330, 0.30059, 0.24705, 0.5288, -0.0108,  0.5135, -0.0069,  0.2515]),
  ("scDFM",      [1.7043, 0.00315, 0.02155, 0.5705,  0.8853,  0.9737,  0.8468,  0.9260]),
  ("CellFlow",   [1.7064, 0.00392, 0.02207, 0.5503,  0.8678,  0.9321,  0.8395,  0.8988]),
- # Five folds by three seeds, 500 epochs, the per-cell mean bounded at its gene's
- # training maximum. THE REPORTING CONVENTION, fixed on 2026-10-13: L2 from the soft
- # gate - the mean the model states - and the five cell-eval columns from the sample
- # gate with the Beta draw. The sampled L2 is 1.6460, 0.002 away, so the convention does
- # not move the column.
+ # Five folds by three seeds, 500 epochs. Scored THE WAY THE PUBLISHED ROWS WERE: the
+ # soft gate with the per-cell mean bounded, 128 predicted cells per perturbation
+ # against every real cell, cell-eval 0.5.42 with pdex 0.1.21, and DE-Spearman read
+ # from de_spearman_sig. Under that protocol the Additive baseline reproduces the
+ # paper's row: MSE 0.00429 / 0.00448, MAE 0.02360 / 0.02276, DE-Spearman 0.5543 /
+ # 0.5564, Pearson delta 0.9019 / 0.9024, DS 0.9560 / 0.9686.
  ("scPKR2 (ours)",
-                [1.6439, 0.00386, 0.02281, 0.4200,  0.8805,  0.9639, MISSING, MISSING]),
+                [1.6439, 0.00357, 0.02081, 0.6630,  0.8949,  0.9431, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Single": [
  ("Control",    [2.6834, 0.0095, 0.0263, NA,      NA,     0.5217,  0.1618,  0.1982]),
