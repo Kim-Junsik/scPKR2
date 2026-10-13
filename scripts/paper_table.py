@@ -155,6 +155,15 @@ def main() -> None:
     parser.add_argument("--infer-top-gene", type=int, default=None,
                         help="score L2 on scanpy-HVG genes of the test subset, as "
                              "scDFM does (their run.sh uses 1000)")
+    parser.add_argument("--l2-gate", default=None,
+                        choices=["soft", "hard", "sample"],
+                        help="the gate for the L2 column alone; defaults to --gate. "
+                             "THE REPORTING CONVENTION IS --gate sample --l2-gate soft: "
+                             "L2 is a distance between population means, so it is read "
+                             "from the mean the model states, and the five cell-eval "
+                             "columns are read from cells drawn from it. With the mean "
+                             "bounded the two L2s differ by 0.002 on norman additive, "
+                             "so the choice does not move the column.")
     parser.add_argument("--gate", default=None,
                         choices=["soft", "hard", "sample"],
                         help="score under this hurdle gate instead of the one in "
@@ -211,7 +220,10 @@ def main() -> None:
         print("no finished run matched.")
         return
 
-    print(f"scoring the {args.group} held-out conditions")
+    l2_gate = args.l2_gate or args.gate
+    print(f"scoring the {args.group} held-out conditions"
+          + (f"  (L2 under {l2_gate}, cell-eval columns under {args.gate})"
+             if l2_gate != args.gate else ""))
     headers = ["L2"] + [h for _, h, _ in CELLEVAL] + NOT_COMPUTABLE
     line = f"{'run':32s} " + " ".join(f"{h:>12s}" for h in headers)
     print(line)
@@ -223,7 +235,7 @@ def main() -> None:
         values = celleval_means(run_dir, args.gate, args.group, args.calibration,
                                 args.bound_mean)
         l2 = (float("nan") if args.no_l2 else
-              compute_l2(run_dir, args.device, args.n_cells, args.gate,
+              compute_l2(run_dir, args.device, args.n_cells, l2_gate,
                          args.infer_top_gene, args.group, args.calibration,
                          args.realisation, args.bound_mean))
 

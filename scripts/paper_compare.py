@@ -36,11 +36,13 @@ TABLES = {
  ("STATE",     [17.3330, 0.30059, 0.24705, 0.5288, -0.0108,  0.5135, -0.0069,  0.2515]),
  ("scDFM",      [1.7043, 0.00315, 0.02155, 0.5705,  0.8853,  0.9737,  0.8468,  0.9260]),
  ("CellFlow",   [1.7064, 0.00392, 0.02207, 0.5503,  0.8678,  0.9321,  0.8395,  0.8988]),
- # Five folds by three seeds, 500 epochs, the sample gate with the Beta draw and the
- # per-cell mean bounded at its gene's training maximum - one prediction for all six
- # columns. The soft-gate L2 under the same bound is 1.6439, 0.002 away.
+ # Five folds by three seeds, 500 epochs, the per-cell mean bounded at its gene's
+ # training maximum. THE REPORTING CONVENTION, fixed on 2026-10-13: L2 from the soft
+ # gate - the mean the model states - and the five cell-eval columns from the sample
+ # gate with the Beta draw. The sampled L2 is 1.6460, 0.002 away, so the convention does
+ # not move the column.
  ("scPKR2 (ours)",
-                [1.6460, 0.00386, 0.02281, 0.4200,  0.8805,  0.9639, MISSING, MISSING]),
+                [1.6439, 0.00386, 0.02281, 0.4200,  0.8805,  0.9639, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Single": [
  ("Control",    [2.6834, 0.0095, 0.0263, NA,      NA,     0.5217,  0.1618,  0.1982]),
