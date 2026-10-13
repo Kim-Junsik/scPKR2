@@ -38,7 +38,8 @@ def to_celleval_label(condition: str, naming) -> str:
 def build_pair(model, data, fold: dict, config: dict,
                rng: np.random.Generator, max_cells: int | None = None,
                genes: np.ndarray | None = None,
-               predictor=None) -> tuple[ad.AnnData, ad.AnnData]:
+               predictor=None,
+               pred_cells: int | None = None) -> tuple[ad.AnnData, ad.AnnData]:
     """Predicted and real AnnData over the fold's test conditions plus control.
 
     For every test condition the prediction transports a fresh sample of control
@@ -70,9 +71,17 @@ def build_pair(model, data, fold: dict, config: dict,
         real = data.cells(condition)
         if max_cells and real.shape[0] > max_cells:
             real = real[rng.choice(real.shape[0], size=max_cells, replace=False)]
-        n = real.shape[0]
+        # `pred_cells` fixes how many cells are PREDICTED per condition, while the real
+        # side keeps every cell. scDFM's own test() does exactly that with 128
+        # (src/script/run.py: `N = 128; source = source[idx][:N]`), and every row of the
+        # published tables that came out of it was scored that way. Matching the real
+        # count instead - several hundred - gives a quieter fold-change estimate, and
+        # the Additive baseline then reads DE-Spearman 0.6286 here against 0.5564 in
+        # the paper.
+        n = real.shape[0] if pred_cells is None else int(pred_cells)
         pick = rng.choice(control_cells.shape[0], size=n,
                           replace=control_cells.shape[0] < n)
+        n_real = real.shape[0]
         # `predictor` swaps the model for a reference prediction - the control itself,
         # or the true singles added - written through the SAME export, so a published
         # baseline row can be reproduced by the same scorer before any model column
@@ -89,7 +98,7 @@ def build_pair(model, data, fold: dict, config: dict,
         pred_blocks.append(predicted)
         pred_labels += [label] * n
         real_blocks.append(real)
-        real_labels += [label] * n
+        real_labels += [label] * n_real
 
     def assemble(blocks, labels):
         matrix = np.concatenate(blocks, axis=0).astype(np.float32)
@@ -108,11 +117,12 @@ def build_pair(model, data, fold: dict, config: dict,
 
 def export(model, data, fold: dict, config: dict, out_dir: str,
            rng: np.random.Generator, max_cells: int | None = None,
-           genes: np.ndarray | None = None, predictor=None) -> dict[str, str]:
+           genes: np.ndarray | None = None, predictor=None,
+           pred_cells: int | None = None) -> dict[str, str]:
     import os
     os.makedirs(out_dir, exist_ok=True)
     adata_pred, adata_real = build_pair(model, data, fold, config, rng,
-                                        max_cells, genes, predictor)
+                                        max_cells, genes, predictor, pred_cells)
     paths = {"pred": os.path.join(out_dir, "pred.h5ad"),
              "real": os.path.join(out_dir, "real.h5ad")}
     adata_pred.write_h5ad(paths["pred"])

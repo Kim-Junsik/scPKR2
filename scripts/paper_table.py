@@ -192,6 +192,10 @@ def main() -> None:
                              "default is kept equal to that script's so the two cannot "
                              "silently disagree - they did once, and a change that did "
                              "nothing looked like a change that did not work")
+    parser.add_argument("--pred-cells", type=int, default=None,
+                        help="read the export made with run_celleval.py --pred-cells")
+    parser.add_argument("--results-tag", default=None,
+                        help="read the scores written with run_celleval.py --results-tag")
     parser.add_argument("--baseline", default=None, choices=["control", "additive"],
                         help="read the cell-eval columns of a reference export made by "
                              "run_celleval.py --baseline; use with --no-l2")
@@ -236,10 +240,12 @@ def main() -> None:
     table = []
     for run_dir in runs:
         name = os.path.basename(run_dir.rstrip("/\\"))
+        folder = celleval_dir(args.gate, args.calibration, args.bound_mean,
+                              args.pred_cells, args.baseline)
+        if args.results_tag:
+            folder = os.path.join(folder, args.results_tag)
         values = celleval_means(run_dir, args.gate, args.group, args.calibration,
-                                args.bound_mean,
-                                f"celleval_baseline_{args.baseline}"
-                                if args.baseline else None)
+                                args.bound_mean, folder)
         l2 = (float("nan") if args.no_l2 else
               compute_l2(run_dir, args.device, args.n_cells, l2_gate,
                          args.infer_top_gene, args.group, args.calibration,

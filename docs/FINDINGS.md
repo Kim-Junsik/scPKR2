@@ -538,3 +538,36 @@ DE-Spearman 0.5564, Pearson Δ 0.9024, DS 0.9686)을 재현하면 채점기가 �
 | Pearson Δ | 0.8986 | 0.8853 | 이김, 근소. 채점기 오차 +0.004를 빼도 +0.009 |
 | MSE | 0.00345 | 0.00315 | 짐 |
 | DS | 0.9629 | 0.9737 | 짐 |
+
+---
+
+## 15. 보고 규약 변경, 그리고 발표 표의 채점 프로토콜
+
+### 규약: 여섯 열 전부 soft
+
+2026-10-13에 12절의 규약("L2는 soft, 나머지는 sample")을 **"여섯 열 전부 soft"**로 바꾼다.
+13절의 측정이 근거다 — soft가 sample보다 다섯 열에서 낫고, 하나의 예측에서 전부 나온다.
+
+    python scripts/run_celleval.py <run> --gate soft --bound-mean ...
+    python scripts/paper_table.py  <runs> --gate soft --bound-mean ...
+
+### scDFM이 실제로 채점한 방식
+
+14절에서 DE-Spearman이 발표 값과 어긋났다 (Additive 기준선 0.6286 대 0.5564). scDFM의 공개
+코드에서 이유 둘을 찾았다.
+
+| | scDFM (`src/script/run.py`의 `test()`, `environment.yml`) | 이 저장소 (지금까지) |
+|---|---|---|
+| cell-eval | **0.5.42**, pdex 0.1.21 | 0.8.1 |
+| 섭동당 예측 세포 | **128개** (`N = 128; source = source[idx][:N]`) | 실제 세포 수와 동일 |
+| 실제 세포 | 전부 | 전부 |
+| 호출 | `MetricsEvaluator(pred, real, control_pert, pert_col, num_threads=32).compute()` | 같음 |
+
+예측 세포가 128개뿐이면 fold change 추정에 잡음이 커져 DE-Spearman이 낮아진다. Additive
+기준선이 여기서 0.07 높게 읽힌 것과 방향이 같다. MSE가 발표 값보다 6 % 낮게 읽힌 것도 같은
+이유로 설명된다.
+
+`run_celleval.py --pred-cells 128`이 그 export를 만들고, `--results-tag`가 다른 cell-eval
+버전의 점수를 같은 export 옆에 따로 저장한다. **이 프로토콜로 Additive 기준선이 0.5564를
+재현하는지가 다음 확인이다.** 재현되면 그것이 발표 표와 같은 척도이고, 다섯 열을 전부 그
+방식으로 다시 잰다.

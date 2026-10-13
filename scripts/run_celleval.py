@@ -188,7 +188,8 @@ if __name__ == "__main__":
 
 
 def celleval_dir(gate: str | None, variant: str | None,
-                 bounded: bool = False) -> str:
+                 bounded: bool = False, pred_cells: int | None = None,
+                 baseline: str | None = None) -> str:
     """The export folder for one (gate, variant) reading of a checkpoint.
 
     scripts/paper_table.py imports THIS function rather than rebuilding the name,
@@ -209,6 +210,12 @@ def celleval_dir(gate: str | None, variant: str | None,
     # gets its own folder for the same reason a different gate does.
     if bounded:
         name = f"{name}_bounded"
+    # A reference prediction has no gate, so it does not carry one in its name.
+    if baseline:
+        name = f"celleval_baseline_{baseline}"
+    # Fewer predicted cells is a different export of the same run, not a rerun of it.
+    if pred_cells:
+        name = f"{name}_n{int(pred_cells)}"
     return name
 
 
@@ -256,6 +263,15 @@ def main() -> None:
                              "reached 62.88 against cell-eval's limit of 15. "
                              "clamped_gaussian is what training assumes and biases the "
                              "mean upward; it reproduces v2's number and nothing else.")
+    parser.add_argument("--pred-cells", type=int, default=None,
+                        help="predict this many cells per condition instead of matching "
+                             "the real count. scDFM's test() uses 128, with the real "
+                             "side at full size, so 128 is what reproduces the "
+                             "published protocol")
+    parser.add_argument("--results-tag", default=None,
+                        help="write the scores into this subfolder of the export, so a "
+                             "second cell-eval version can score the same export "
+                             "without overwriting the first (e.g. ce0542)")
     parser.add_argument("--baseline", default=None, choices=["control", "additive"],
                         help="export a REFERENCE prediction instead of the model's, "
                              "through the same pipeline: `control` is the control cells "
@@ -300,11 +316,14 @@ def main() -> None:
     # this export holds, so an export made under one must never overwrite an export made
     # under another - that would destroy the uncalibrated baseline the calibrated run is
     # being compared against, silently.
-    out_dir = os.path.join(args.run_dir, celleval_dir(args.gate, args.calibration,
-                                                      args.bound_mean))
-    if args.baseline:
-        # Its own folder, and no gate in the name: a baseline has none.
-        out_dir = os.path.join(args.run_dir, f"celleval_baseline_{args.baseline}")
+    out_dir = os.path.join(args.run_dir, celleval_dir(
+        args.gate, args.calibration, args.bound_mean, args.pred_cells, args.baseline))
+    export_dir = out_dir
+    if args.results_tag:
+        # Scores from a second cell-eval version go BESIDE the export, not over the
+        # first version's results.csv - the point of scoring twice is to compare them.
+        out_dir = os.path.join(export_dir, args.results_tag)
+        os.makedirs(out_dir, exist_ok=True)
     interpreter = None
     if not args.export_only:
         # Resolved and probed BEFORE the export, so a broken environment costs
@@ -313,13 +332,13 @@ def main() -> None:
         check_runnable(interpreter)
 
     if args.score_only:
-        paths = {"pred": os.path.join(out_dir, "pred.h5ad"),
-                 "real": os.path.join(out_dir, "real.h5ad")}
+        paths = {"pred": os.path.join(export_dir, "pred.h5ad"),
+                 "real": os.path.join(export_dir, "real.h5ad")}
         absent = [p for p in paths.values() if not os.path.exists(p)]
         if absent:
             raise SystemExit(f"--score-only needs an existing export; missing "
                              f"{', '.join(absent)}")
-        print(f"scoring the existing export in {out_dir}")
+        print(f"scoring the existing export in {export_dir}")
     else:
         checkpoint_path = os.path.join(args.run_dir, "checkpoint.pt")
         if not os.path.exists(checkpoint_path):
@@ -372,8 +391,8 @@ def main() -> None:
                 # Floored at zero because cell-eval refuses negative log1p values; the
                 # shift itself is the naive additive baseline of the published tables.
                 return np.maximum(cells + shift[None, :], 0.0).astype(np.float32)
-        paths = export(model, data, fold, config, out_dir, rng,
-                       args.max_cells, genes, predictor)
+        paths = export(model, data, fold, config, export_dir, rng,
+                       args.max_cells, genes, predictor, args.pred_cells)
         print(f"  wrote {paths['pred']} and {paths['real']}  "
               f"({paths['n_cells']} cells, {paths['n_conditions']} conditions, "
               f"{paths['n_genes']} genes)")
