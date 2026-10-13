@@ -45,10 +45,30 @@ from run_celleval import celleval_dir
 
 # (column in agg_results.csv, header, higher-is-better). ASCII headers on purpose:
 # a Korean Windows console is cp949 and mangles the arrows and greek the paper uses.
+# DE_rho IS de_spearman_sig, NOT de_spearman_lfc_sig. The two sit side by side in
+# cell-eval's output and measure different things: _sig is the rank correlation, across
+# perturbations, of HOW MANY genes come out significantly changed; _lfc_sig is the rank
+# correlation of the fold changes of those genes. This file read _lfc_sig from v2 on.
+#
+# Settled by reproducing the published Additive row, 128 predicted cells per
+# perturbation as scDFM's test() does it:
+#
+#                        de_spearman_sig   de_spearman_lfc_sig
+#   cell-eval 0.8.1          0.5550             0.6114
+#   cell-eval 0.5.42         0.5543             0.6557
+#   the paper's Additive     0.5564
+#
+# The published table says so itself once it is looked at: STATE has Pearson delta
+# -0.0108 beside a DE-Spearman of 0.5288, which a fold-change correlation could not
+# give, and Control is N.A., which is what a correlation of counts that are all zero is.
+#
+# IT IS ONE NUMBER PER SCORED FILE, repeated on every row, so averaging rows returns it
+# and filtering rows does NOT restrict it - a block reported on its own has to be
+# exported on its own (run_celleval.py --group).
 CELLEVAL = [
     ("mse", "MSE", False),
     ("mae", "MAE", False),
-    ("de_spearman_lfc_sig", "DE_rho", True),
+    ("de_spearman_sig", "DE_rho", True),
     ("pearson_delta", "Pearson_d", True),
     ("discrimination_score_l1", "DS", True),
 ]
@@ -194,6 +214,13 @@ def main() -> None:
                              "nothing looked like a change that did not work")
     parser.add_argument("--pred-cells", type=int, default=None,
                         help="read the export made with run_celleval.py --pred-cells")
+    parser.add_argument("--group-export", action="store_true",
+                        help="the export was made per block with run_celleval.py "
+                             "--group, so read that block's own folder. Needed for "
+                             "DE_rho and DS whenever a split holds out singles and "
+                             "doubles together: both are computed over every "
+                             "perturbation in the scored file, so filtering rows "
+                             "afterwards does not separate them.")
     parser.add_argument("--results-tag", default=None,
                         help="read the scores written with run_celleval.py --results-tag")
     parser.add_argument("--baseline", default=None, choices=["control", "additive"],
@@ -241,7 +268,8 @@ def main() -> None:
     for run_dir in runs:
         name = os.path.basename(run_dir.rstrip("/\\"))
         folder = celleval_dir(args.gate, args.calibration, args.bound_mean,
-                              args.pred_cells, args.baseline)
+                              args.pred_cells, args.baseline,
+                              args.group if args.group_export else None)
         if args.results_tag:
             folder = os.path.join(folder, args.results_tag)
         values = celleval_means(run_dir, args.gate, args.group, args.calibration,

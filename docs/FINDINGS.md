@@ -571,3 +571,48 @@ DE-Spearman 0.5564, Pearson Δ 0.9024, DS 0.9686)을 재현하면 채점기가 �
 버전의 점수를 같은 export 옆에 따로 저장한다. **이 프로토콜로 Additive 기준선이 0.5564를
 재현하는지가 다음 확인이다.** 재현되면 그것이 발표 표와 같은 척도이고, 다섯 열을 전부 그
 방식으로 다시 잰다.
+
+---
+
+## 16. DE-Spearman은 `de_spearman_sig`였다 — 다른 열을 읽고 있었다
+
+Additive 기준선, 섭동당 예측 세포 128개, norman additive 5 fold:
+
+| | `de_spearman_sig` | `de_spearman_lfc_sig` | MSE | MAE | Pearson Δ | DS |
+|---|---|---|---|---|---|---|
+| cell-eval 0.8.1 | **0.5550** | 0.6114 | 0.00429 | 0.02360 | 0.9019 | 0.9733 |
+| cell-eval 0.5.42 (pdex 0.1.21) | **0.5543** | 0.6557 | 0.00429 | 0.02360 | 0.9019 | 0.9560 |
+| 발표 표의 Additive | **0.5564** | | 0.00448 | 0.02276 | 0.9024 | 0.9686 |
+
+**발표 표의 "DE-Spearman ρ"는 `de_spearman_sig`다.** 두 채점기 모두 0.4 % 안에서 재현한다.
+`paper_table.py`는 v2 때부터 이름이 비슷한 `de_spearman_lfc_sig`를 읽어 왔다.
+
+| | 무엇을 재는가 |
+|---|---|
+| `de_spearman_sig` | 섭동별 **유의한 DE 유전자 개수**의 순위 상관. 채점 파일 하나에 숫자 하나 |
+| `de_spearman_lfc_sig` | 유의한 유전자들의 **fold change** 순위 상관. 섭동마다 하나 |
+
+발표 표 자체에 단서가 있었다. STATE는 Pearson Δ가 −0.0108인데 DE-Spearman이 0.5288이고,
+Control은 N.A.다 — fold change 상관으로는 나올 수 없고, 개수가 전부 0인 상관으로는 나온다.
+
+**따라서 이 문서의 11~14절에 적힌 DE-Spearman 값(0.42, 0.83, 0.6286 등)은 전부 발표 표에
+없는 지표의 값이다.** 발표 표와의 비교에 쓸 수 없다. 나머지 네 열의 결론은 영향받지 않는다.
+
+### 나머지 확인된 것
+
+- cell-eval 0.5.42가 죽던 이유는 **pdex 버전**이었다. scDFM이 고정한 0.1.21에서는 돈다.
+  0.1.28에서는 두 군에서 동점인 유전자가 NaN p-value를 내고 FDR 보정이 그것을 거부한다.
+- 예측 세포를 128개로 맞추면 Pearson Δ가 0.9061 → 0.9019로 발표 값 0.9024에 붙는다.
+- DS만 버전에 따라 다르다 (0.9733 대 0.9560, 발표 값 0.9686은 그 사이).
+
+### 이 지표의 성질이 요구하는 것
+
+`de_spearman_sig`와 DS는 **채점 파일 안의 모든 섭동에 걸쳐** 계산된다. 행을 걸러서는 나눌 수
+없으므로, Single과 Double을 따로 보고하는 Table 2는 **블록별로 따로 export해 따로 채점**해야
+한다 (`run_celleval.py --group single|double`, `paper_table.py --group-export`).
+
+### 확정된 프로토콜
+
+발표 표와 나란히 놓는 숫자는 다음으로 잰다: soft 게이트, 세포 평균 한계, **섭동당 예측 세포
+128개**, **cell-eval 0.5.42 + pdex 0.1.21** (`requirements-celleval-scdfm.txt`),
+DE-Spearman은 `de_spearman_sig`.

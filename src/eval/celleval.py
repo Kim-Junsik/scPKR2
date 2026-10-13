@@ -39,7 +39,8 @@ def build_pair(model, data, fold: dict, config: dict,
                rng: np.random.Generator, max_cells: int | None = None,
                genes: np.ndarray | None = None,
                predictor=None,
-               pred_cells: int | None = None) -> tuple[ad.AnnData, ad.AnnData]:
+               pred_cells: int | None = None,
+               conditions: list | None = None) -> tuple[ad.AnnData, ad.AnnData]:
     """Predicted and real AnnData over the fold's test conditions plus control.
 
     For every test condition the prediction transports a fresh sample of control
@@ -65,7 +66,11 @@ def build_pair(model, data, fold: dict, config: dict,
     real_blocks.append(control_cells)
     real_labels += [CONTROL_LABEL] * control_cells.shape[0]
 
-    for condition in fold["test"]:
+    # `conditions` restricts the export to one block of the held-out set. Two of the
+    # reported columns are computed over EVERY perturbation in the scored file - the
+    # count correlation behind DE-Spearman, and the discrimination score's ranking - so
+    # a table that reports singles and doubles separately needs them scored separately.
+    for condition in (fold["test"] if conditions is None else conditions):
         if condition not in data.rows:
             continue
         real = data.cells(condition)
@@ -118,11 +123,13 @@ def build_pair(model, data, fold: dict, config: dict,
 def export(model, data, fold: dict, config: dict, out_dir: str,
            rng: np.random.Generator, max_cells: int | None = None,
            genes: np.ndarray | None = None, predictor=None,
-           pred_cells: int | None = None) -> dict[str, str]:
+           pred_cells: int | None = None,
+           conditions: list | None = None) -> dict[str, str]:
     import os
     os.makedirs(out_dir, exist_ok=True)
     adata_pred, adata_real = build_pair(model, data, fold, config, rng,
-                                        max_cells, genes, predictor, pred_cells)
+                                        max_cells, genes, predictor, pred_cells,
+                                        conditions)
     paths = {"pred": os.path.join(out_dir, "pred.h5ad"),
              "real": os.path.join(out_dir, "real.h5ad")}
     adata_pred.write_h5ad(paths["pred"])

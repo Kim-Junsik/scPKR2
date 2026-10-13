@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
 def celleval_dir(gate: str | None, variant: str | None,
                  bounded: bool = False, pred_cells: int | None = None,
-                 baseline: str | None = None) -> str:
+                 baseline: str | None = None, group: str | None = None) -> str:
     """The export folder for one (gate, variant) reading of a checkpoint.
 
     scripts/paper_table.py imports THIS function rather than rebuilding the name,
@@ -216,6 +216,9 @@ def celleval_dir(gate: str | None, variant: str | None,
     # Fewer predicted cells is a different export of the same run, not a rerun of it.
     if pred_cells:
         name = f"{name}_n{int(pred_cells)}"
+    # One block of the held-out set, exported and scored by itself.
+    if group in ("single", "double"):
+        name = f"{name}_{group}"
     return name
 
 
@@ -263,6 +266,11 @@ def main() -> None:
                              "reached 62.88 against cell-eval's limit of 15. "
                              "clamped_gaussian is what training assumes and biases the "
                              "mean upward; it reproduces v2's number and nothing else.")
+    parser.add_argument("--group", default="all", choices=["all", "single", "double"],
+                        help="export and score one block of the held-out conditions by "
+                             "itself. DE-Spearman and DS are computed over every "
+                             "perturbation in the file, so the Single and Double blocks "
+                             "of a split that holds out both must be separate files")
     parser.add_argument("--pred-cells", type=int, default=None,
                         help="predict this many cells per condition instead of matching "
                              "the real count. scDFM's test() uses 128, with the real "
@@ -317,7 +325,8 @@ def main() -> None:
     # under another - that would destroy the uncalibrated baseline the calibrated run is
     # being compared against, silently.
     out_dir = os.path.join(args.run_dir, celleval_dir(
-        args.gate, args.calibration, args.bound_mean, args.pred_cells, args.baseline))
+        args.gate, args.calibration, args.bound_mean, args.pred_cells, args.baseline,
+        args.group))
     export_dir = out_dir
     if args.results_tag:
         # Scores from a second cell-eval version go BESIDE the export, not over the
@@ -391,8 +400,14 @@ def main() -> None:
                 # Floored at zero because cell-eval refuses negative log1p values; the
                 # shift itself is the naive additive baseline of the published tables.
                 return np.maximum(cells + shift[None, :], 0.0).astype(np.float32)
+        only = None
+        if args.group in ("single", "double"):
+            from src.eval.conditions import condition_groups
+            groups = condition_groups(data, stats, fold, config["split"]["method"])
+            only = groups["test doubles" if args.group == "double" else "test singles"]
+            print(f"exporting the {len(only)} held-out {args.group} conditions only")
         paths = export(model, data, fold, config, export_dir, rng,
-                       args.max_cells, genes, predictor, args.pred_cells)
+                       args.max_cells, genes, predictor, args.pred_cells, only)
         print(f"  wrote {paths['pred']} and {paths['real']}  "
               f"({paths['n_cells']} cells, {paths['n_conditions']} conditions, "
               f"{paths['n_genes']} genes)")
