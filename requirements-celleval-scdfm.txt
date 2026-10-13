@@ -1,0 +1,26 @@
+# The scorer the PUBLISHED tables were produced with, pin for pin.
+#
+# Taken from scDFM's own environment.yml (AI4Science-WestlakeU/scDFM, 2cf6bca). Its
+# test() builds a prediction of 128 cells per perturbation and hands it to
+# cell_eval.MetricsEvaluator under exactly these versions, so a number scored here is on
+# the same scale as the rows in the paper - which the 0.8.1 scorer this project has been
+# using is not for DE-Spearman: it reads the Additive baseline at 0.6286 where the paper
+# prints 0.5564.
+#
+# pdex is the one that matters most. cell-eval does not pin it, the differential
+# expression test lives in it, and this project's other scoring environment carries
+# 0.1.28 - under which cell-eval 0.5.42 dies on norman with
+#   ValueError: All values in `ps` must lie between 0. and 1.
+# because a gene tied across both groups gives the rank test a NaN.
+#
+# Build it as its own interpreter and never install it into the training environment:
+#   python3 -m venv .env-ce-scdfm
+#   .env-ce-scdfm/bin/pip install -r requirements-celleval-scdfm.txt
+
+cell-eval==0.5.42
+pdex==0.1.21
+scipy==1.16.1
+numpy==2.2.6
+polars==1.32.0
+anndata==0.12.1
+pandas==2.3.1
