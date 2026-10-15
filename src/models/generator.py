@@ -19,9 +19,12 @@ THE INTERACTION IS NOT A TERM. Summing two generators and exponentiating gives
 
 so what separates a double from the sum of its singles begins with the anticommutator -
 the object v2 constructed by hand - and it is symmetric under exchange, which is what a
-simultaneous perturbation has to be. Because u is a LOG-gain, generators that commute
-give u_S = u_a + u_b: fold changes multiply, the null model genetic-interaction work
-measures epistasis against.
+simultaneous perturbation has to be. Because u is a LOG-gain, a double whose displacement
+is the sum of its singles' gives u_S = u_a + u_b: fold changes multiply, the null model
+genetic-interaction work measures epistasis against. That holds exactly when AB = BA = 0,
+NOT merely when the generators commute - commuting gives exp(A+B) = exp(A) exp(B), i.e.
+both at once equals one after the other, and the cross term (exp(A)-I)(exp(B)-I) p
+remains. Arm C (generator_linear) imposes the multiplicative null everywhere.
 
 THE CONSTANT COORDINATE IS NOT OPTIONAL. Phi is standardised to zero mean over the
 training cells, so without it the average cell has p = 0 and therefore dp = 0: no

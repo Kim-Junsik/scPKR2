@@ -123,7 +123,10 @@ def _commuting(model: PathwayModulation) -> None:
 
 
 def test_g7_commuting_generators_compose_as_a_product():
-    """exp(A + B) = exp(A) exp(B) when AB = BA: the null model is exactly multiplicative.
+    """exp(A + B) = exp(A) exp(B) when AB = BA: both at once is one after the other.
+
+    This is NOT the multiplicative null. That needs the displacements to add, which takes
+    AB = BA = 0; commuting generators still leave (exp(A)-I)(exp(B)-I) p between them.
 
     Without the constant coordinate, because masking its row breaks the orthogonal
     construction used here to make the generators commute.
