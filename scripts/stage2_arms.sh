@@ -46,7 +46,10 @@ arm_overrides() {
     F) echo "model.generator_explicit_interaction=true" ;;     # learned kappa
     G) echo "model.generator_constant=false" ;;                # no constant coordinate
     H) echo "model.shared_rank=0 model.private_rank=36" ;;     # no shared modes
-    *) echo "unknown arm '$1' (B C D E F G H)" >&2; return 2 ;;
+    # Measured against D, the settings S3 left standing, not against B: does knowing
+    # WHICH gene was perturbed - the targets forced into the anchor block - carry weight?
+    I) echo "train.fm_weight=0 train.endpoint_weight=0 model.anchor_genes=variance" ;;
+    *) echo "unknown arm '$1' (B C D E F G H I)" >&2; return 2 ;;
   esac
 }
 
@@ -81,7 +84,8 @@ m, t = c["model"], c["train"]
 print(f"  {tag:10s} response={m.get('response')}  fold={c['split']['fold']}  "
       f"epochs={t['epochs']}  linear={m.get('generator_linear')}  "
       f"constant={m.get('generator_constant')}  kappa={m.get('generator_explicit_interaction')}  "
-      f"obs={m.get('observables')}  ranks={m.get('shared_rank')}/{m.get('private_rank')}  "
+      f"obs={m.get('observables')}  anchors={m.get('anchor_genes')}  "
+      f"ranks={m.get('shared_rank')}/{m.get('private_rank')}  "
       f"fm={t.get('fm_weight')}/{t.get('endpoint_weight')}")
 PY
   done
