@@ -185,6 +185,12 @@ def main() -> None:
     for key, value in model.observables.summary().items():
         log(f"  {key:20s} {value}")
 
+    if model.graph_summary and model.graph_summary.get("kind") != "none":
+        log("\n=== the generator's graph (fixed, docs/DESIGN_GRAPH.md) ===")
+        for key, value in model.graph_summary.items():
+            log(f"  {key:22s} {value:.4f}" if isinstance(value, float)
+                else f"  {key:22s} {value}")
+
     log("\n=== the model ===")
     log(f"  {model.extra_repr()}")
     for key, value in model.learned_parameters().items():

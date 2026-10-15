@@ -240,6 +240,18 @@ DEFAULTS: dict[str, Any] = {
         "generator_linear": False,               # True  = arm C, dp = B p, no exponential
         "generator_explicit_interaction": False,  # True  = arm F, a learned weight on
         #                                           the anticommutator beyond exp's own
+        # docs/DESIGN_GRAPH.md: which pairs of coordinates a generator may couple.
+        #   none         every pair - stage 2 as measured in FINDINGS 21
+        #   kegg         pathways sharing >= generator_mask_min_shared genes, and a
+        #                gene's anchor with the pathways it belongs to (arm K)
+        #   permuted     the kegg graph, labels shuffled inside each block (arm P, K1)
+        #   correlation  as many edges per block as kegg, chosen by the training control
+        #                cells' coordinate correlation (arm R, K2)
+        # Every mask needs observables=kegg and observable_whiten=none: whitening mixes
+        # the coordinates, and a mask on mixed coordinates is not the KEGG graph.
+        "generator_mask": "none",
+        "generator_mask_min_shared": 5,    # m, chosen on the validation split (K0)
+        "generator_mask_seed": None,       # permuted only; None = train.seed
         "embed_dim": 64,
         "decoder_width": 256,
         # exp(u) is unbounded, so u is not. At 3.0 the multiplicative factor runs over

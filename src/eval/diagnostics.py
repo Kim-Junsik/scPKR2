@@ -18,6 +18,7 @@ import torch
 from ..data.conventions import ConditionNaming
 from ..data.dataset import PerturbationData
 from ..data import splits
+from ..models.graph import generator_mask
 from ..models.model import PathwayModulation
 from ..models.observables import Observables
 from . import baselines
@@ -135,8 +136,22 @@ def build_model(config: dict, data, stats, fold: dict, method: str, device: str)
         log_ratio = baselines.fit_ridge_log_ratio(
             stats, train_conditions, data.perturbations,
             alpha=float(config["model"]["additive_alpha"]))["u"]
+    graph_mask, graph_summary = None, None
+    if config["model"].get("response", "mlp") == "generator":
+        control_phi = None
+        if config["model"].get("generator_mask", "none") == "correlation":
+            # Control cells only, and only the ones training may see - the same leak
+            # surface `rows` defines, which every control cell is inside.
+            with torch.no_grad():
+                control_phi = observables(torch.as_tensor(
+                    np.asarray(data.x[data.control_rows], dtype=np.float32))).numpy()
+        graph_mask, graph_summary = generator_mask(
+            config, observables, control_phi,
+            bool(config["model"].get("generator_constant", True)))
     model = PathwayModulation(config, observables, data.n_perturbations,
-                              detection, dispersion, ceiling, log_ratio).to(device)
+                              detection, dispersion, ceiling, log_ratio,
+                              graph_mask=graph_mask,
+                              graph_summary=graph_summary).to(device)
     model.head.realisation = str(config["eval"].get("realisation", "gamma"))
     forced = config["eval"].get("bound_mean")
     if forced is not None:

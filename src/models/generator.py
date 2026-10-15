@@ -57,7 +57,8 @@ class GeneratorResponse(nn.Module):
     def __init__(self, config: dict, observable_dim: int, n_genes: int,
                  n_perturbations: int, detection: torch.Tensor | None = None,
                  dispersion: torch.Tensor | None = None,
-                 ceiling: torch.Tensor | None = None):
+                 ceiling: torch.Tensor | None = None,
+                 graph_mask: torch.Tensor | None = None):
         super().__init__()
         cfg = config["model"]
         self.n_genes = int(n_genes)
@@ -85,6 +86,22 @@ class GeneratorResponse(nn.Module):
         if self.constant:
             mask[-1, :] = 0.0
         self.register_buffer("row_mask", mask, persistent=False)
+
+        # Which coordinate pairs a generator may couple - docs/DESIGN_GRAPH.md, built by
+        # models/graph.py. All ones unless a graph is asked for, and asking for one
+        # without supplying it is an error rather than a silent dense model. PERSISTENT,
+        # so a scored run uses the graph it was trained on - the permuted control's
+        # shuffle included - rather than one rebuilt and hoped to match.
+        kind = str(cfg.get("generator_mask", "none"))
+        if graph_mask is None:
+            if kind != "none":
+                raise ValueError(f"model.generator_mask={kind} but no graph was built; "
+                                 f"construct the model through build_model")
+            graph_mask = torch.ones(self.dim, self.dim)
+        if tuple(graph_mask.shape) != (self.dim, self.dim):
+            raise ValueError(f"graph mask is {tuple(graph_mask.shape)}, the generator "
+                             f"is {(self.dim, self.dim)}")
+        self.register_buffer("graph_mask", graph_mask.clone().float(), persistent=True)
 
         # NO BIAS on u or v. A bias is an effect that does not depend on dp, so the
         # control would receive it too, and "no perturbation changes nothing" would stop
@@ -131,7 +148,8 @@ class GeneratorResponse(nn.Module):
         device, dtype = self.row_mask.device, self.row_mask.dtype
         if not perturbations:
             return torch.zeros(self.dim, self.dim, device=device, dtype=dtype)
-        generators = [self.operators.matrix(pert) * self.row_mask
+        support = self.row_mask * self.graph_mask
+        generators = [self.operators.matrix(pert) * support
                       for pert in sorted(perturbations)]
         total = generators[0]
         for generator in generators[1:]:
@@ -176,6 +194,18 @@ class GeneratorResponse(nn.Module):
             self.ceiling, self.bound_mean, self.log_scale, self.log_factor_max)
 
     # ------------------------------------------------------------ bookkeeping
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        """All ones for checkpoints written before the graph existed.
+
+        Every stage 2 run so far was trained with no mask, and all ones is exactly that,
+        so this reproduces the saved model rather than approximating it. Same hook, same
+        reason, as the whitener's in models/observables.py.
+        """
+        key = prefix + "graph_mask"
+        if key not in state_dict:
+            state_dict[key] = torch.ones_like(self.graph_mask)
+        return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def turn_on_offset(self) -> float:
         """softplus(v0): what an untrained model, and the control always, adds to x."""

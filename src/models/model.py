@@ -54,7 +54,9 @@ class PathwayModulation(nn.Module):
                  detection: torch.Tensor | None = None,
                  dispersion: torch.Tensor | None = None,
                  ceiling: torch.Tensor | None = None,
-                 log_ratio=None):
+                 log_ratio=None,
+                 graph_mask: torch.Tensor | None = None,
+                 graph_summary: dict | None = None):
         super().__init__()
         self.observables = observables
         self.n_genes = len(observables.gene_names)
@@ -64,10 +66,17 @@ class PathwayModulation(nn.Module):
         # generator per perturbation on the observables, exponentiated. Read with
         # .get("mlp") so every run trained before the key existed rebuilds as stage 1.
         self.response = str(config["model"].get("response", "mlp"))
+        # The generator's graph, docs/DESIGN_GRAPH.md. Built from the data in build_model
+        # and passed in, because the correlation control reads training control cells.
+        self.graph_summary = graph_summary
         if self.response == "generator":
             self.modulation = GeneratorResponse(
                 config, observables.dim, self.n_genes, n_perturbations,
-                detection=detection, dispersion=dispersion, ceiling=ceiling)
+                detection=detection, dispersion=dispersion, ceiling=ceiling,
+                graph_mask=graph_mask)
+        elif str(config["model"].get("generator_mask", "none")) != "none":
+            raise ValueError("model.generator_mask restricts generators, and "
+                             f"model.response={self.response!r} has none")
         elif self.response == "mlp":
             self.modulation = PerturbationModulation(
                 config, observables.dim, self.n_genes, n_perturbations,
