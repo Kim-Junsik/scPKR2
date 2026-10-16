@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import config as config_module
 from src.models.graph import (coordinate_graph, correlation_graph, generator_mask,
+                              maplink_graph,
                               permute_within_blocks)
 from src.models.model import PathwayModulation
 
@@ -251,3 +252,60 @@ def test_the_mlp_cannot_be_given_a_graph():
     config = config_module.load(["model.generator_mask=kegg"])
     with pytest.raises(ValueError, match="restricts generators"):
         PathwayModulation(config, FakeKeggObservables(), N_PERTURBATIONS)
+
+
+# ------------------------------------------------------------ the maplink source
+
+LINKS = {"hsa00001": {"hsa00003", "hsa09999"}, "hsa00002": set(),
+         "hsa00003": {"hsa00001"}, "hsa00004": {"hsa00005"}, "hsa00005": set()}
+
+
+def test_the_maplink_block_is_the_maps_links_made_symmetric():
+    support = FakeKeggObservables().matrix.numpy() != 0
+    g = maplink_graph(sorted(LINKS), LINKS, support, P)
+    assert np.array_equal(g, g.T) and g.diagonal().all()
+    assert g[0, 2] and g[3, 4]                         # the two links inside the space
+    assert not g[0, 1] and not g[1, 2]                 # shared genes do not count here
+    assert int(g[:P, :P].sum()) - P == 4               # hsa09999 has no coordinate
+    assert np.array_equal(g[P:, :P], kegg_graph(1)[P:, :P])   # anchors as before
+
+
+def _write_snapshot(root, with_kgml=True):
+    kegg = root / "kegg"
+    (kegg / "kgml").mkdir(parents=True)
+    ids = sorted(LINKS)
+    (kegg / "pathway_list.tsv").write_text(
+        "".join(f"{p}\tMap {p} - Homo sapiens (human)\n" for p in ids), encoding="utf-8")
+    (kegg / "pathway_gene.tsv").write_text(
+        "".join(f"path:{p}\thsa:1\n" for p in ids), encoding="utf-8")
+    if with_kgml:
+        for pathway, targets in LINKS.items():
+            entries = "".join(f'<entry id="{i}" name="path:{t}" type="map"/>'
+                              for i, t in enumerate(sorted(targets) + [pathway]))
+            (kegg / "kgml" / f"{pathway}.xml").write_text(
+                f'<pathway name="path:{pathway}">{entries}</pathway>', encoding="utf-8")
+    return str(kegg)
+
+
+def _named_observables():
+    observables = FakeKeggObservables()
+    observables.names = [f"Map {p}" for p in sorted(LINKS)] + [f"<anchor g{g}>"
+                                                                for g in ANCHOR_GENES]
+    return observables
+
+
+def test_the_maplink_mask_is_read_from_the_kgml_files(tmp_path):
+    config = config_for("kegg", "model.generator_mask_source=maplink",
+                        f"data.kegg_dir={_write_snapshot(tmp_path)}")
+    mask, summary = generator_mask(config, _named_observables(), None, True)
+    assert summary["source"] == "maplink" and summary["min_shared"] is None
+    assert summary["pathway_pathway_edges"] == 4
+    assert bool(mask[0, 2]) and not bool(mask[0, 1])
+    assert bool(mask[:, K].all())                      # the push is still free
+
+
+def test_a_missing_kgml_file_is_an_error_not_an_empty_row(tmp_path):
+    config = config_for("kegg", "model.generator_mask_source=maplink",
+                        f"data.kegg_dir={_write_snapshot(tmp_path, with_kgml=False)}")
+    with pytest.raises(FileNotFoundError, match="download_kegg.py --kgml"):
+        generator_mask(config, _named_observables(), None, True)

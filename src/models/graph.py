@@ -21,8 +21,11 @@ and on the constant coordinate, when there is one: its COLUMN is open - where a
 perturbation first pushes is not restricted, DESIGN_GRAPH.md 2.3 measures why - and its
 row is closed by the generator's own row mask, not here.
 
-The snapshot holds gene sets only, so "connected in KEGG" means "shares genes". That is
-a KEGG-derived relation, not curated pathway crosstalk, and is never called the latter.
+The pathway-pathway block has two sources (`generator_mask_source`). `shared` connects
+pathways that share genes - a relation derived from the gene sets, not curated crosstalk,
+and never called the latter; at m = 1 it lost to its own permutation (FINDINGS 22).
+`maplink` connects a pathway to the maps its KEGG map draws an arrow to, read from the
+KGML files - the curated relation, at 3.2 % density on norman fold 3 against 36.4 %.
 
 THE CONTROLS. `permuted` relabels the kegg graph inside each block - pathways among
 pathways, anchors among anchors - so the edge count and every degree are unchanged and
@@ -37,6 +40,11 @@ import numpy as np
 import torch
 
 KINDS = ("none", "kegg", "permuted", "correlation")
+# Where the pathway-pathway block of the KEGG graph comes from.
+#   shared   two pathways share >= m genes - derived from the gene sets (FINDINGS 22)
+#   maplink  one pathway's KEGG map draws a link to the other - the curated relation,
+#            read from the KGML files (scripts/download_kegg.py --kgml)
+SOURCES = ("shared", "maplink")
 
 
 def coordinate_graph(support: np.ndarray, n_pathways: int,
@@ -44,13 +52,40 @@ def coordinate_graph(support: np.ndarray, n_pathways: int,
     """[K, K] bool, symmetric, diagonal on. `support` is M != 0, pathways first."""
     if min_shared < 1:
         raise ValueError(f"generator_mask_min_shared must be >= 1 (got {min_shared})")
+    pathways = support[:n_pathways].astype(np.int64)
+    return _with_anchors(pathways @ pathways.T >= min_shared, support, n_pathways)
+
+
+def maplink_graph(pathways: list[str], links: dict[str, set[str]],
+                  support: np.ndarray, n_pathways: int) -> np.ndarray:
+    """The same graph with its pathway block taken from the maps' links.
+
+    Symmetric: a map that draws an arrow to its neighbour connects the two both ways,
+    since nothing in this model distinguishes upstream from downstream. Links to maps
+    outside the observable space are dropped - they have no coordinate to land on.
+    """
+    if len(pathways) != n_pathways:
+        raise ValueError(f"{len(pathways)} pathway ids for {n_pathways} pathway rows")
+    index = {pathway: i for i, pathway in enumerate(pathways)}
+    block = np.zeros((n_pathways, n_pathways), dtype=bool)
+    for pathway, targets in links.items():
+        if pathway not in index:
+            continue
+        for target in targets:
+            if target in index:
+                block[index[pathway], index[target]] = True
+                block[index[target], index[pathway]] = True
+    return _with_anchors(block, support, n_pathways)
+
+
+def _with_anchors(pathway_block: np.ndarray, support: np.ndarray,
+                  n_pathways: int) -> np.ndarray:
+    """A pathway-pathway block, plus anchor-pathway membership and the diagonal."""
     support = support.astype(np.int64)
     k = support.shape[0]
     pathways = support[:n_pathways]
     graph = np.zeros((k, k), dtype=bool)
-
-    shared = pathways @ pathways.T
-    graph[:n_pathways, :n_pathways] = shared >= min_shared
+    graph[:n_pathways, :n_pathways] = pathway_block
 
     # An anchor row reads exactly one gene; it connects to the pathways holding it.
     anchor_genes = support[n_pathways:].argmax(axis=1)
@@ -140,8 +175,21 @@ def generator_mask(config: dict, observables, control_phi: np.ndarray | None,
 
     n_pathways = int(observables.n_pathways)
     support = (observables.matrix.detach().cpu().numpy() != 0)
+    source = str(cfg.get("generator_mask_source", "shared"))
+    if source not in SOURCES:
+        raise ValueError(f"unknown model.generator_mask_source {source!r} "
+                         f"({' | '.join(SOURCES)})")
     min_shared = int(cfg.get("generator_mask_min_shared", 5))
-    kegg = coordinate_graph(support, n_pathways, min_shared)
+    if source == "shared":
+        kegg = coordinate_graph(support, n_pathways, min_shared)
+    else:
+        from ..data.kegg import load_map_links, pathway_ids
+
+        kegg_dir = config["data"]["kegg_dir"]
+        pathways = pathway_ids(kegg_dir, list(observables.names[:n_pathways]))
+        kegg = maplink_graph(pathways, load_map_links(kegg_dir, pathways), support,
+                             n_pathways)
+        min_shared = None                     # not a parameter of this graph
     if kind == "kegg":
         graph = kegg
     elif kind == "permuted":
@@ -164,7 +212,7 @@ def generator_mask(config: dict, observables, control_phi: np.ndarray | None,
         mask[k, :] = 1.0
     off = graph.copy()
     np.fill_diagonal(off, False)
-    summary = {"kind": kind, "min_shared": min_shared,
+    summary = {"kind": kind, "source": source, "min_shared": min_shared,
                "edges": int(off.sum()),
                "density": float(off.sum() / max(k * (k - 1), 1)),
                "pathway_pathway_edges": int(off[:n_pathways, :n_pathways].sum()),

@@ -250,6 +250,10 @@ DEFAULTS: dict[str, Any] = {
         # Every mask needs observables=kegg and observable_whiten=none: whitening mixes
         # the coordinates, and a mask on mixed coordinates is not the KEGG graph.
         "generator_mask": "none",
+        # Where the KEGG graph's pathway-pathway block comes from: `shared` (>= m genes
+        # in common, FINDINGS 22) or `maplink` (the links KEGG's maps draw to other maps,
+        # read from assets/kegg/kgml/ - scripts/download_kegg.py --kgml).
+        "generator_mask_source": "shared",
         "generator_mask_min_shared": 5,    # m, chosen on the validation split (K0)
         "generator_mask_seed": None,       # permuted only; None = train.seed
         "embed_dim": 64,

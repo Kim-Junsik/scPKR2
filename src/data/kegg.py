@@ -135,3 +135,51 @@ def summarise(prior: np.ndarray, names: list[str], targets: list[str],
         "targets_covered": covered,
         "targets_total": len(targets),
     }
+
+
+def pathway_ids(kegg_dir: str, names: list[str]) -> list[str]:
+    """KEGG ids for the readable names build_prior returns, in the same order.
+
+    build_prior keeps names, not ids, and every consumer before the maplink graph only
+    needed names. The two are one-to-one in this snapshot (checked: no name repeats), and
+    a repeat would make this ambiguous, so it is refused rather than resolved silently.
+    """
+    _, readable = load_pathways(kegg_dir)
+    by_name: dict[str, str] = {}
+    for pathway, name in readable.items():
+        if name in by_name:
+            raise ValueError(f"two KEGG pathways share the name {name!r}")
+        by_name[name] = pathway
+    return [by_name[name] for name in names]
+
+
+def load_map_links(kegg_dir: str, pathways: list[str]) -> dict[str, set[str]]:
+    """pathway -> the other pathways its KEGG map draws a link to (KGML `map` entries).
+
+    These are the arrows KEGG's curators put on each map pointing at neighbouring maps -
+    the curated pathway-pathway relation the gene sets alone cannot give. Read from
+    <kegg_dir>/kgml/<id>.xml, which scripts/download_kegg.py --kgml writes; a pathway
+    whose file is missing is an error, because a silently empty row would read as "this
+    pathway links to nothing".
+    """
+    import xml.etree.ElementTree as ET
+
+    directory = os.path.join(kegg_dir, "kgml")
+    links: dict[str, set[str]] = {}
+    for pathway in pathways:
+        path = os.path.join(directory, f"{pathway}.xml")
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"{path} is missing - run: python scripts/download_kegg.py --kgml")
+        targets: set[str] = set()
+        for entry in ET.parse(path).getroot().findall("entry"):
+            if entry.get("type") != "map":
+                continue
+            for name in entry.get("name", "").split():
+                name = name.replace("path:", "")
+                if name.startswith("map"):
+                    name = "hsa" + name[3:]
+                if name != pathway:
+                    targets.add(name)
+        links[pathway] = targets
+    return links
