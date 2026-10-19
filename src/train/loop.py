@@ -127,6 +127,10 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
     endpoint_weight = float(train_cfg["endpoint_weight"])
     gene_weight = float(train_cfg["gene_endpoint_weight"])
     mmd_weight = float(train_cfg["mmd_weight"])
+    # docs/DESIGN_PRIOR.md: what the dense branch beside a KEGG backbone pays per unit of
+    # squared weight. Zero, and skipped, for every model without that branch.
+    residual_weight = (float(config["model"].get("generator_residual_penalty", 0.0))
+                       if getattr(model.modulation, "residual", None) is not None else 0.0)
     if mmd_weight > 0:
         log("  [warn] mmd_weight > 0: scPKFM measured its MMD estimate at NOISE LEVEL "
             "at weight 10. It has to earn this on the validation folds.")
@@ -158,7 +162,8 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
         order = rng.permutation(len(conditions))
         if train_cfg["max_steps_per_epoch"]:
             order = order[:int(train_cfg["max_steps_per_epoch"])]
-        totals = {k: [] for k in ("loss", "fm", "endpoint", "gene", "head", "mmd")}
+        totals = {k: [] for k in ("loss", "fm", "endpoint", "gene", "head", "mmd",
+                                  "residual")}
 
         for index in order:
             condition = conditions[index]
@@ -235,6 +240,11 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
             loss = loss + head_loss
             totals["head"].append(float(head_loss))
 
+            if residual_weight > 0:
+                penalty = model.modulation.residual_penalty(perturbations)
+                loss = loss + residual_weight * penalty
+                totals["residual"].append(float(penalty))
+
             if mmd_weight > 0:
                 realised = model.head.point_estimate(params)
                 sigmas = median_sigmas(x_target_c, scales=(0.5, 1.0, 2.0, 4.0))
@@ -272,7 +282,8 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
         parts = {k: float(np.mean(v)) for k, v in totals.items() if v}
         if (epoch + 1) % max(1, int(train_cfg["epochs"]) // 40) == 0 or epoch == 0:
             extra = "".join(f"  {k} {parts[k]:.5f}" for k in
-                            ("fm", "endpoint", "gene", "head", "mmd") if k in parts)
+                            ("fm", "endpoint", "gene", "head", "mmd", "residual")
+                            if k in parts)
             log(f"  epoch {epoch + 1:4d}/{train_cfg['epochs']}  "
                 f"loss {parts.get('loss', float('nan')):.5f}{extra}  "
                 f"| {_scale_report(model, perturbations)}"

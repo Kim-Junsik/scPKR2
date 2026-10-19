@@ -103,6 +103,32 @@ class GeneratorResponse(nn.Module):
                              f"is {(self.dim, self.dim)}")
         self.register_buffer("graph_mask", graph_mask.clone().float(), persistent=True)
 
+        # A dense branch beside the masked one - docs/DESIGN_PRIOR.md. Its own shared modes
+        # and private parts, the same ranks, and NO mask: what it adds outside the graph is
+        # what the data needed that the graph did not give, and the training loop charges
+        # it lambda * ||A_W||^2. No separate alpha: a learned scale on this branch would
+        # let it take everything and leave the backbone meaningless.
+        self.residual = None
+        if bool(cfg.get("generator_residual", False)):
+            if kind == "none":
+                raise ValueError("model.generator_residual needs model.generator_mask: "
+                                 "a residual with no backbone is a dense model twice "
+                                 "the size")
+            self.residual = KoopmanOperators(
+                {"model": {**cfg, "composition": "sum"}}, n_perturbations, self.dim)
+            # EXACTLY ZERO at the start, by zeroing one factor of each product - LoRA's
+            # initialisation. Small random values, like the backbone's, put a dense layer
+            # of noise outside the graph before any data is seen: the off-graph share read
+            # 0.91 after one epoch, and H2 would have been measuring initialisation. With
+            # one factor zero, A_W = 0 but dL/dV = (U c)^T dL/dA is not, so the branch
+            # grows only where the data asks for it - and the model starts as the hard
+            # mask.
+            with torch.no_grad():
+                if self.residual.shared_rank:
+                    self.residual.basis_v.zero_()
+                if self.residual.private_rank:
+                    self.residual.private_v.zero_()
+
         # NO BIAS on u or v. A bias is an effect that does not depend on dp, so the
         # control would receive it too, and "no perturbation changes nothing" would stop
         # being true the first time it moved.
@@ -138,6 +164,35 @@ class GeneratorResponse(nn.Module):
             return phi
         return torch.cat([phi, torch.ones_like(phi[:, :1])], dim=1)
 
+    def generator(self, pert: int) -> torch.Tensor:
+        """A_a, [D, D]: the backbone on its graph, plus the residual if there is one."""
+        out = self.operators.matrix(pert) * self.graph_mask
+        if self.residual is not None:
+            out = out + self.residual.matrix(pert)
+        return out * self.row_mask
+
+    def offgraph_share(self, perturbations: list[int]) -> float:
+        """sum_a ||(1 - G) * A_a||^2 / sum_a ||A_a||^2 on the K x K block.
+
+        docs/DESIGN_PRIOR.md H2. The constant's column is left out: it is open in every
+        graph, so it would count the same for a backbone and its shuffle.
+        """
+        k = self.observable_dim
+        outside = (1.0 - self.graph_mask)[:k, :k]
+        off = total = 0.0
+        for pert in sorted(set(perturbations)):
+            a = self.generator(pert)[:k, :k]
+            off += float((a * outside).square().sum())
+            total += float(a.square().sum())
+        return off / total if total > 0 else float("nan")
+
+    def residual_penalty(self, perturbations: list[int]) -> torch.Tensor:
+        """sum_a ||A_a^W||_F^2 over the perturbations given; zero without a residual."""
+        if self.residual is None or not perturbations:
+            return torch.zeros((), device=self.row_mask.device, dtype=self.row_mask.dtype)
+        return sum((self.residual.matrix(pert) * self.row_mask).square().sum()
+                   for pert in sorted(perturbations))
+
     def compose(self, perturbations: list[int]) -> torch.Tensor:
         """B_S, [D, D]. The zero matrix for the control.
 
@@ -148,9 +203,7 @@ class GeneratorResponse(nn.Module):
         device, dtype = self.row_mask.device, self.row_mask.dtype
         if not perturbations:
             return torch.zeros(self.dim, self.dim, device=device, dtype=dtype)
-        support = self.row_mask * self.graph_mask
-        generators = [self.operators.matrix(pert) * support
-                      for pert in sorted(perturbations)]
+        generators = [self.generator(pert) for pert in sorted(perturbations)]
         total = generators[0]
         for generator in generators[1:]:
             total = total + generator
@@ -222,6 +275,10 @@ class GeneratorResponse(nn.Module):
             u_weight = float(self.to_u.weight.abs().max())
             v_weight = float(self.to_v.weight.abs().max())
         text = f"|B| {generator:.4f}  |Wu| {u_weight:.4f}  |Wv| {v_weight:.4f}"
+        if self.residual is not None:
+            with torch.no_grad():
+                share = self.offgraph_share(perturbations)
+            text += f"  offgraph {share:.3f}"
         if self.kappa is not None:
             text += f"  kappa {float(self.kappa):+.4f}"
         return text

@@ -256,6 +256,11 @@ DEFAULTS: dict[str, Any] = {
         "generator_mask_source": "shared",
         "generator_mask_min_shared": 5,    # m, chosen on the validation split (K0)
         "generator_mask_seed": None,       # permuted only; None = train.seed
+        # docs/DESIGN_PRIOR.md: a dense branch added to the masked one, A = G*A_K + A_W,
+        # paying generator_residual_penalty * ||A_W||^2 per perturbation per step. KEGG
+        # edges are then free and every other coupling has to earn its way. Needs a mask.
+        "generator_residual": False,
+        "generator_residual_penalty": 0.0,  # lambda, chosen on the validation split (H0)
         "embed_dim": 64,
         "decoder_width": 256,
         # exp(u) is unbounded, so u is not. At 3.0 the multiplicative factor runs over
