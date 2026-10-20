@@ -65,7 +65,9 @@ def main() -> None:
                         help="list the N strongest off-graph couplings of the kegg runs")
     args = parser.parse_args()
 
-    rows, energy, names = [], None, None
+    # Keyed by coordinate NAME, not position: folds keep slightly different pathway sets
+    # (210-212 on norman), so position i is not the same pathway in two folds.
+    rows, energy, seen = [], {}, {}
     for run_dir in args.runs:
         config, data, stats, fold, model = load_run(run_dir, device=args.device)
         response = model.modulation
@@ -92,9 +94,13 @@ def main() -> None:
                "residual": residual / backbone if backbone else float("nan")}
         rows.append(row)
         if row["kind"] == "kegg" and args.top:
-            normalised = run_energy / max(backbone, 1e-12)
-            energy = normalised if energy is None else energy + normalised
+            normalised = (run_energy / max(backbone, 1e-12)).numpy()
             names = list(model.observables.names)
+            rows_i, cols_j = np.nonzero(normalised)
+            for i, j in zip(rows_i.tolist(), cols_j.tolist()):
+                key = (names[i], names[j])
+                energy[key] = energy.get(key, 0.0) + float(normalised[i, j])
+                seen[key] = seen.get(key, 0) + 1
         print(f"  {row['run']:18s} {row['kind']:12s} fold {row['fold']} seed {row['seed']}  "
               f"lambda {row['lambda']}  off-graph {share:.4f}  "
               f"residual/total {row['residual']:.4f}")
@@ -128,16 +134,17 @@ def main() -> None:
             print(f"  H2 is decided on 12 pairs (folds 0, 1, 2, 4 x seeds 0, 1, 2); "
                   f"{n} here - not a verdict")
 
-    if energy is not None and args.top:
+    if energy and args.top:
         kegg_runs = sum(1 for r in rows if r["kind"] == "kegg")
-        mean = (energy / kegg_runs).numpy()
-        order = np.argsort(-mean, axis=None)[:args.top]
+        # Averaged over EVERY kegg run, a run without the pair counting as zero: a
+        # coupling only some folds can even express is weaker evidence, and this keeps it so.
+        ranked = sorted(energy.items(), key=lambda item: -item[1])[:args.top]
         print("")
         print(f"  strongest off-graph couplings over {kegg_runs} kegg run(s) "
               f"(share of each run's generator energy, averaged) - CANDIDATES only")
-        for flat in order:
-            i, j = np.unravel_index(flat, mean.shape)
-            print(f"  {mean[i, j]:.5f}  {names[i][:45]:45s} <- {names[j][:45]}")
+        for (name_i, name_j), total in ranked:
+            print(f"  {total / kegg_runs:.5f}  in {seen[(name_i, name_j)]:2d}/{kegg_runs} runs  "
+                  f"{name_i[:42]:42s} <- {name_j[:42]}")
 
 
 if __name__ == "__main__":
