@@ -19,6 +19,8 @@ DEFAULTS: dict[str, Any] = {
         "kegg_dir": "assets/kegg",
         # STRING links and info (docs/DESIGN_ENCODER.md 2.1), already on disk.
         "string_dir": "data/networks",
+        # drug -> mechanism for ComboSciPlex, committed so the raw file is not needed.
+        "moa_table": "assets/knowledge/combosciplex_moa.csv",
         "pathway_min_genes": 10,
         "pathway_max_genes": 300,
         "drop_disease_pathways": True,

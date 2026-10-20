@@ -45,7 +45,10 @@ def string_embedding(string_dir: str, min_score: int, dim: int
     links_path = os.path.join(string_dir, "string_links.txt.gz")
     for path in (info_path, links_path):
         if not os.path.exists(path):
-            raise FileNotFoundError(f"{path} is missing (data.string_dir)")
+            raise FileNotFoundError(
+                f"{path} is missing (data.string_dir). The STRING files are not in git; "
+                f"copy data/networks/string_info.txt.gz and string_links.txt.gz from the "
+                f"machine that has them - the same files, so the embedding is the same")
     with gzip.open(info_path, "rt", encoding="utf-8") as handle:
         info = pd.read_csv(handle, sep="\t")
     name_column = next(c for c in info.columns if "preferred_name" in c)
@@ -120,6 +123,25 @@ def shuffle_rows(matrix: np.ndarray, seed: int) -> np.ndarray:
     return out
 
 
+def read_mechanisms(config: dict) -> dict[str, str]:
+    """drug -> mechanism: the committed table if it exists, else the raw ComboSciPlex obs.
+
+    assets/knowledge/combosciplex_moa.csv is drug_mechanisms() run once on the raw file
+    and committed - 17 rows - so a machine holding only the caches can still build the
+    knowledge. It is the annotation as written, nothing corrected.
+    """
+    table = config["data"].get("moa_table")
+    if table and os.path.exists(table):
+        frame = pd.read_csv(table)
+        if list(frame.columns) != ["drug", "mechanism"]:
+            raise ValueError(f"{table}: expected columns drug, mechanism")
+        return dict(zip(frame["drug"].astype(str), frame["mechanism"].astype(str)))
+    raw = config["data"]["raw_h5ad"]
+    if not os.path.exists(raw):
+        raise FileNotFoundError(f"neither {table} nor {raw} exists - no mechanism table")
+    return drug_mechanisms(raw)
+
+
 def knowledge_matrix(config: dict, perturbations: list[str]
                      ) -> tuple[np.ndarray | None, dict]:
     """K, [P, d], rows in `perturbations` order - or None for the lookup-table model."""
@@ -142,7 +164,7 @@ def knowledge_matrix(config: dict, perturbations: list[str]
             if gene in row:
                 matrix[i] = vectors[row[gene]]
     else:
-        mechanism = drug_mechanisms(config["data"]["raw_h5ad"])
+        mechanism = read_mechanisms(config)
         classes = sorted(set(mechanism.values()))
         matrix = np.zeros((len(perturbations), len(classes)), dtype=np.float32)
         for i, drug in enumerate(perturbations):

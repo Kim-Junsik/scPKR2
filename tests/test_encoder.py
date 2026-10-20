@@ -171,3 +171,18 @@ def test_the_mlp_cannot_be_given_knowledge():
 def test_private_false_without_an_encoder_is_refused():
     with pytest.raises(ValueError, match="needs a knowledge encoder"):
         build().modulation.operators.matrix(0, private=False)
+
+
+def test_the_committed_mechanism_table_is_the_raw_annotation():
+    """The table must say exactly what the raw ComboSciPlex obs says, when both exist."""
+    from src.data.knowledge import drug_mechanisms, read_mechanisms
+
+    config = config_module.load([])
+    table = config["data"]["moa_table"]
+    raw = "data/combosciplex/combosciplex.h5ad"
+    if not os.path.exists(table):
+        pytest.skip("no committed mechanism table")
+    from_table = read_mechanisms(config)
+    assert len(from_table) == 17
+    if os.path.exists(raw):
+        assert from_table == drug_mechanisms(raw)
