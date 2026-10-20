@@ -41,3 +41,5 @@ Thumbs.db
 # Generated from docs/*.md by scripts/md_to_pdf.py; regenerate rather than commit.
 docs/*.pdf
 .env-ce-scdfm/
+# Virtual Cell Challenge 2025 download (about 34 GB) - data, never committed
+/nvcc/
