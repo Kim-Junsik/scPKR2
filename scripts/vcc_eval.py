@@ -129,6 +129,9 @@ def main() -> None:
         ranked = sorted(by_setting.items(), key=lambda item: np.mean(item[1]))
         for (dropout, epochs), values in ranked:
             print(f"  {dropout:8.2f} {epochs:7d} {np.mean(values):9.4f}  {len(values)}")
+        truth = means[[row_of[c] for c in scored]]
+        print(f"  baselines: control {np.linalg.norm(truth - control_mean, axis=1).mean():.4f}"
+              f"   mean {np.linalg.norm(truth - mean_baseline, axis=1).mean():.4f}")
         (dropout, epochs), _ = ranked[0]
         print(f"\n  H0 chooses dropout {dropout} and {epochs} epochs: "
               f"P={dropout} EPOCHS={epochs} for the test runs")

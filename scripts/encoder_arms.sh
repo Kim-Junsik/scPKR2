@@ -7,6 +7,8 @@
 #   bash scripts/encoder_arms.sh combo-val                   H0 on ComboSciPlex
 #   P=0.5 EPOCHS=2500 bash scripts/encoder_arms.sh combo-test   C1: {D, M, MP} x 3 seeds
 #   P=0.5 bash scripts/encoder_arms.sh norman                N1: E on norman fold 3
+#   EPOCHS=2500 bash scripts/encoder_arms.sh combo-dose      secondary: {M, MP} at dropout
+#                                                            0.5 on the test split (5.1)
 #
 # Arms:
 #   E   STRING knowledge          (genes)        M   mechanism knowledge   (drugs)
@@ -86,6 +88,8 @@ fi
 for step in "$@"; do
   case "$step" in
     vcc-val|combo-val) ;;
+    combo-dose)
+      [ -n "$EPOCHS" ] || { echo "combo-dose needs EPOCHS, the length H0 chose" >&2; exit 2; } ;;
     vcc-test|combo-test)
       [ -n "$P" ] && [ -n "$EPOCHS" ] || { echo "$step needs P and EPOCHS, the values H0 chose" >&2; exit 2; } ;;
     norman)
@@ -141,6 +145,13 @@ for step in "$@"; do
         for seed in $SEEDS; do
           train "c${arm}_s${seed}" "${COMBO[*]}" "${COMBO_TEST[*]}" "train.seed=${seed}" \
             "train.epochs=${EPOCHS}" "model.perturbation_dropout=${P}" "$(knowledge_of $arm)"
+        done
+      done ;;
+    combo-dose)
+      for arm in M MP; do
+        for seed in $SEEDS; do
+          train "c${arm}_p0.5_s${seed}" "${COMBO[*]}" "${COMBO_TEST[*]}" "train.seed=${seed}" \
+            "train.epochs=${EPOCHS}" model.perturbation_dropout=0.5 "$(knowledge_of $arm)"
         done
       done ;;
     norman)
