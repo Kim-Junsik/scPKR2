@@ -18,6 +18,7 @@ import torch
 from ..data.conventions import ConditionNaming
 from ..data.dataset import PerturbationData
 from ..data import splits
+from ..data.knowledge import knowledge_matrix
 from ..models.graph import generator_mask
 from ..models.model import PathwayModulation
 from ..models.observables import Observables
@@ -148,10 +149,24 @@ def build_model(config: dict, data, stats, fold: dict, method: str, device: str)
         graph_mask, graph_summary = generator_mask(
             config, observables, control_phi,
             bool(config["model"].get("generator_constant", True)))
+    knowledge, knowledge_summary = None, None
+    if config["model"].get("response", "mlp") == "generator":
+        knowledge, knowledge_summary = knowledge_matrix(config, data.perturbations)
     model = PathwayModulation(config, observables, data.n_perturbations,
                               detection, dispersion, ceiling, log_ratio,
-                              graph_mask=graph_mask,
-                              graph_summary=graph_summary).to(device)
+                              graph_mask=graph_mask, graph_summary=graph_summary,
+                              knowledge=knowledge,
+                              knowledge_summary=knowledge_summary).to(device)
+    if knowledge is not None:
+        # Which perturbations training may see - the same train_conditions everything
+        # above was fitted on. An unseen one is predicted from its knowledge alone.
+        seen = torch.zeros(data.n_perturbations, dtype=torch.bool)
+        for condition in train_conditions:
+            for gene in data.naming.genes(condition):
+                if gene in data.pert_index:
+                    seen[data.pert_index[gene]] = True
+        model.modulation.operators.seen.copy_(seen.to(device))
+        knowledge_summary["seen"] = int(seen.sum())
     model.head.realisation = str(config["eval"].get("realisation", "gamma"))
     forced = config["eval"].get("bound_mean")
     if forced is not None:

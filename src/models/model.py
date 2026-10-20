@@ -56,7 +56,8 @@ class PathwayModulation(nn.Module):
                  ceiling: torch.Tensor | None = None,
                  log_ratio=None,
                  graph_mask: torch.Tensor | None = None,
-                 graph_summary: dict | None = None):
+                 graph_summary: dict | None = None,
+                 knowledge=None, knowledge_summary: dict | None = None):
         super().__init__()
         self.observables = observables
         self.n_genes = len(observables.gene_names)
@@ -69,11 +70,15 @@ class PathwayModulation(nn.Module):
         # The generator's graph, docs/DESIGN_GRAPH.md. Built from the data in build_model
         # and passed in, because the correlation control reads training control cells.
         self.graph_summary = graph_summary
+        self.knowledge_summary = knowledge_summary
         if self.response == "generator":
             self.modulation = GeneratorResponse(
                 config, observables.dim, self.n_genes, n_perturbations,
                 detection=detection, dispersion=dispersion, ceiling=ceiling,
-                graph_mask=graph_mask)
+                graph_mask=graph_mask, knowledge=knowledge)
+        elif str(config["model"].get("perturbation_knowledge", "none")) != "none":
+            raise ValueError("model.perturbation_knowledge builds generators, and "
+                             f"model.response={self.response!r} has none")
         elif str(config["model"].get("generator_mask", "none")) != "none":
             raise ValueError("model.generator_mask restricts generators, and "
                              f"model.response={self.response!r} has none")

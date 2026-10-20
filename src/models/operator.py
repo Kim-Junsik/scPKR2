@@ -59,7 +59,8 @@ COMPOSITIONS = ("anticommutator", "commutator", "bilinear", "sum")
 class KoopmanOperators(nn.Module):
     """A_a for every perturbation, and B_S for a set of them."""
 
-    def __init__(self, config: dict, n_perturbations: int, dim: int):
+    def __init__(self, config: dict, n_perturbations: int, dim: int,
+                 knowledge=None):
         super().__init__()
         model_cfg = config["model"]
         shared = int(model_cfg["shared_rank"])
@@ -79,6 +80,28 @@ class KoopmanOperators(nn.Module):
         self.composition = kind
         scale = float(model_cfg["operator_init_scale"])
 
+        # docs/DESIGN_ENCODER.md: a perturbation's coefficients from what is KNOWN about
+        # it, c_a = c_bar + E k_a + delta_a. Without knowledge the table below is c_a
+        # itself, as before; with it the table is delta_a, starting at ZERO, so that
+        # with E = 0 every perturbation begins at c_bar = 1 - the same starting point.
+        if knowledge is not None and not shared:
+            raise ValueError("a knowledge encoder needs shared modes (shared_rank > 0): "
+                             "the coefficients it produces are coefficients of those modes")
+        if knowledge is None:
+            self.register_buffer("knowledge", None)
+        else:
+            knowledge = torch.as_tensor(knowledge, dtype=torch.float32)
+            if knowledge.shape[0] != n_perturbations:
+                raise ValueError(f"knowledge has {knowledge.shape[0]} rows for "
+                                 f"{n_perturbations} perturbations")
+            # Persistent: a scored run uses the knowledge it was trained with - the
+            # shuffled control's permutation included - not one rebuilt and hoped equal.
+            self.register_buffer("knowledge", knowledge.clone(), persistent=True)
+            # Which perturbations the training data contained; set by build_model. An
+            # unseen perturbation never uses its private parameters, which nothing has
+            # trained (models/generator.py).
+            self.register_buffer("seen", torch.ones(n_perturbations, dtype=torch.bool),
+                                 persistent=True)
         if shared:
             self.basis_u = nn.Parameter(torch.randn(dim, shared) * scale)
             self.basis_v = nn.Parameter(torch.randn(shared, dim) * scale)
@@ -87,7 +110,13 @@ class KoopmanOperators(nn.Module):
             # in common and the coefficients differentiate from there. U diag(c) V is
             # invariant to U -> kU, c -> c/k, so read A_a as a whole and never U or
             # c_a alone.
-            self.coefficient = nn.Parameter(torch.ones(n_perturbations, shared))
+            if self.knowledge is None:
+                self.coefficient = nn.Parameter(torch.ones(n_perturbations, shared))
+            else:
+                self.coefficient = nn.Parameter(torch.zeros(n_perturbations, shared))
+                self.coefficient_mean = nn.Parameter(torch.ones(shared))
+                self.knowledge_map = nn.Parameter(
+                    torch.zeros(shared, self.knowledge.shape[1]))
         if private:
             self.private_u = nn.Parameter(
                 torch.randn(n_perturbations, dim, private) * scale)
@@ -106,18 +135,36 @@ class KoopmanOperators(nn.Module):
 
     # ---------------------------------------------------------------- operators
 
-    def matrix(self, pert: int) -> torch.Tensor:
+    @property
+    def has_knowledge(self) -> bool:
+        return self.knowledge is not None
+
+    def matrix(self, pert: int, private: bool = True) -> torch.Tensor:
         """A_a as a dense [K, K].
+
+        `private=False` leaves out everything only this perturbation owns - delta_a and
+        P_a Q_a - so the generator is what the knowledge encoder alone makes of it. That
+        is how an unseen perturbation is predicted, and what perturbation dropout trains.
+        Refused without an encoder, where it would mean nothing.
 
         Formed rather than applied through the factors because every consumer needs
         it whole: B_S is a product of two operators, the flow map is its exponential,
         and the spectral figure is its eigendecomposition. At K around 450 this is
         200,000 entries and ~10 MFLOP, which is not where this model spends time.
         """
+        if not private and self.knowledge is None:
+            raise ValueError("private=False needs a knowledge encoder")
         out = torch.zeros(self.dim, self.dim, device=self.device, dtype=self.dtype)
         if self.shared_rank:
-            out = out + (self.basis_u * self.coefficient[pert]) @ self.basis_v
-        if self.private_rank:
+            if self.knowledge is None:
+                coefficient = self.coefficient[pert]
+            else:
+                coefficient = (self.coefficient_mean
+                               + self.knowledge_map @ self.knowledge[pert])
+                if private:
+                    coefficient = coefficient + self.coefficient[pert]
+            out = out + (self.basis_u * coefficient) @ self.basis_v
+        if self.private_rank and private:
             out = out + self.private_u[pert] @ self.private_v[pert]
         return out
 

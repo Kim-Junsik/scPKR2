@@ -179,7 +179,9 @@ def main() -> None:
             for g in data.naming.genes(c) if g in data.pert_index}
     log(f"  perturbations with training data: {len(seen)} / {data.n_perturbations}"
         + ("" if len(seen) == data.n_perturbations else
-           "  <- the rest keep their initial embedding and predict the control"))
+           ("  <- the rest are predicted from their knowledge alone"
+            if model.knowledge_summary and model.knowledge_summary.get("kind") != "none"
+            else "  <- the rest keep their initial embedding and predict the control")))
 
     log("\n=== the observables (fixed) ===")
     for key, value in model.observables.summary().items():
@@ -190,6 +192,11 @@ def main() -> None:
         for key, value in model.graph_summary.items():
             log(f"  {key:22s} {value:.4f}" if isinstance(value, float)
                 else f"  {key:22s} {value}")
+
+    if model.knowledge_summary and model.knowledge_summary.get("kind") != "none":
+        log("\n=== the perturbation encoder's knowledge (fixed, docs/DESIGN_ENCODER.md) ===")
+        for key, value in model.knowledge_summary.items():
+            log(f"  {key:22s} {value}")
 
     log("\n=== the model ===")
     log(f"  {model.extra_repr()}")

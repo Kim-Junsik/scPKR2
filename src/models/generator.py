@@ -58,7 +58,8 @@ class GeneratorResponse(nn.Module):
                  n_perturbations: int, detection: torch.Tensor | None = None,
                  dispersion: torch.Tensor | None = None,
                  ceiling: torch.Tensor | None = None,
-                 graph_mask: torch.Tensor | None = None):
+                 graph_mask: torch.Tensor | None = None,
+                 knowledge=None):
         super().__init__()
         cfg = config["model"]
         self.n_genes = int(n_genes)
@@ -76,7 +77,14 @@ class GeneratorResponse(nn.Module):
         # on one more coordinate. Composition is done here, so it is told `sum` and its
         # own pairwise forms are never used.
         self.operators = KoopmanOperators(
-            {"model": {**cfg, "composition": "sum"}}, n_perturbations, self.dim)
+            {"model": {**cfg, "composition": "sum"}}, n_perturbations, self.dim,
+            knowledge=knowledge)
+        # docs/DESIGN_ENCODER.md 1: the probability, per perturbation per training step,
+        # that its private parameters are switched off. Without it they would always be
+        # there to fit the data, and the knowledge path - all an unseen perturbation
+        # has - would never be asked to stand alone.
+        self.dropout = (float(cfg.get("perturbation_dropout", 0.0))
+                        if knowledge is not None else 0.0)
         # An explicit weight on the anticommutator, beyond what the exponential already
         # supplies. ZERO at the start, so this arm begins as the plain model and the
         # comparison is nested rather than between two initialisations.
@@ -166,7 +174,14 @@ class GeneratorResponse(nn.Module):
 
     def generator(self, pert: int) -> torch.Tensor:
         """A_a, [D, D]: the backbone on its graph, plus the residual if there is one."""
-        out = self.operators.matrix(pert) * self.graph_mask
+        private = True
+        if self.operators.has_knowledge:
+            if not bool(self.operators.seen[pert]):
+                private = False          # nothing has trained its private parameters
+            elif (self.training and self.dropout > 0
+                  and float(torch.rand(())) < self.dropout):
+                private = False
+        out = self.operators.matrix(pert, private=private) * self.graph_mask
         if self.residual is not None:
             out = out + self.residual.matrix(pert)
         return out * self.row_mask

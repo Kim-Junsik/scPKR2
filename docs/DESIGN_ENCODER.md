@@ -134,7 +134,10 @@ S의 순열: 유전자는 STRING에 있는 유전자끼리만 섞는다(없는 �
 **H0. 고르는 것은 검증 분할에서만.**
 - VCC: 교란 드롭아웃 p ∈ {0.25, 0.5, 0.75} × 학습 길이 ∈ {100, 250} 에폭, E와 S 각각 시드 0 (run 12개).
   **E와 S의 검증 L2 평균이 가장 낮은 조합**을 고른다. E만 보고 고르면 E에 유리하다.
-- ComboSciPlex: p ∈ {0.25, 0.5, 0.75}, M과 MP 각각 시드 0, 기존 검증 분할 (run 6개). 같은 규칙.
+- ComboSciPlex: p ∈ {0.25, 0.5, 0.75} × 학습 길이 ∈ {1000, 2500} 에폭, M과 MP 각각 시드 0, 기존
+  검증 분할 (run 12개). 같은 규칙. (2026-10-20, 구현 중 결과를 보기 전에 고침: 2단계 모델은
+  ComboSciPlex에서 길이를 정한 적이 없고, 학습 조건이 25개뿐이라 Norman의 250 에폭은 걸음 수로
+  8분의 1이다.) D는 고른 길이를 그대로 쓴다.
 
 **V1. 지식이 기여한다 (VCC, 1차 판정).**
 테스트 유전자 100개 각각의 L2(예측 평균과 실제 평균의 거리, 18,080개 유전자, 정규화 + log1p, 시드 3개
@@ -187,13 +190,15 @@ C1과 N1은 V1의 결론을 보강하거나 제한한다. 이 셋을 합친 서�
 
 ## 8. 순서와 비용
 
+구현 (2026-10-20): `scripts/vcc_prepare.py`(조각 단위 전처리, 고변동 유전자는 scanpy seurat 규칙과 같은 결과로 확인), `src/data/splits.py`의 `split.source=vcc`, `src/data/knowledge.py`(STRING 스펙트럼 임베딩, 약물 기전, 섞기), `src/models/operator.py`·`generator.py`(인코더, 교란 드롭아웃, 본 적 없는 교란), `tests/test_encoder.py`(E1~E6 외 13개), `scripts/vcc_eval.py`(V1, V2), `scripts/encoder_arms.sh`(실험). V3(공식 cell-eval 지표)는 아직 없다.
+
 1. 구현: 지식 벡터(`src/data/knowledge.py`), 인코더(생성자 계수 부분), 교란 드롭아웃, VCC 데이터 적재와
    분할, 평균 기준선, 짝지은 검정 스크립트. 테스트 E1~E6.
 2. VCC 전처리(정규화, log1p, 고변동 유전자, 캐시). 데이터가 커서(약 30만 세포) 메모리를 먼저 확인한다.
-3. H0: VCC 검증 run 12개, ComboSciPlex 검증 run 6개.
+3. H0: VCC 검증 run 12개, ComboSciPlex 검증 run 12개.
 4. 판정: VCC {E, S, N} × 시드 3 = 9 run (+ B0 닫힌 형태), ComboSciPlex {D, M, MP} × 시드 3 = 9 run,
    Norman E × 시드 3 = 3 run.
-5. 합: run 약 39개.
+5. 합: run 약 45개.
 
 ---
 

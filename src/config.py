@@ -17,6 +17,8 @@ DEFAULTS: dict[str, Any] = {
     "data": {
         "raw_h5ad": "data/norman/norman.h5ad",
         "kegg_dir": "assets/kegg",
+        # STRING links and info (docs/DESIGN_ENCODER.md 2.1), already on disk.
+        "string_dir": "data/networks",
         "pathway_min_genes": 10,
         "pathway_max_genes": 300,
         "drop_disease_pathways": True,
@@ -259,6 +261,16 @@ DEFAULTS: dict[str, Any] = {
         # docs/DESIGN_PRIOR.md: a dense branch added to the masked one, A = G*A_K + A_W,
         # paying generator_residual_penalty * ||A_W||^2 per perturbation per step. KEGG
         # edges are then free and every other coupling has to earn its way. Needs a mask.
+        # docs/DESIGN_ENCODER.md: a perturbation's generator coefficients from what is
+        # known about it, c_a = c_bar + E k_a + delta_a (src/data/knowledge.py).
+        #   none    the lookup table, as before    zero    the encoder with k_a = 0
+        #   string  STRING spectral embedding      moa     drug mechanism one-hot
+        "perturbation_knowledge": "none",
+        "knowledge_shuffle": False,        # the control: K's rows permuted among the
+        "knowledge_seed": None,            #   covered perturbations; None = train.seed
+        "knowledge_dim": 64,               # string: eigenvectors kept
+        "knowledge_min_score": 700,        # string: combined_score threshold
+        "perturbation_dropout": 0.5,       # chosen on the validation split (H0)
         "generator_residual": False,
         "generator_residual_penalty": 0.0,  # lambda, chosen on the validation split (H0)
         "embed_dim": 64,

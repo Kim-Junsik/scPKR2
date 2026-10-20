@@ -382,6 +382,51 @@ def folds_from_list(config: dict) -> list[dict[str, Any]]:
              "held_out_singles": [c for c in test + excluded if naming.is_single(c)]}]
 
 
+def folds_vcc(config: dict) -> list[dict[str, Any]]:
+    """The Virtual Cell Challenge 2025's own split, from the cache's obs['vcc_set'].
+
+    150 training genes, 50 validation and 100 test, no gene in two sets
+    (scripts/vcc_prepare.py writes the column). Every test gene is UNSEEN: no condition
+    of the training side contains it, which is the point of the dataset here -
+    docs/DESIGN_ENCODER.md.
+
+    split.validation=false  scores the test genes; the validation genes are excluded
+                            from training and from everything else
+    split.validation=true   scores the validation genes; the test genes are excluded,
+                            so a design choice made here never sees them
+
+    The control is on the training side, as for every other source.
+    """
+    from .conventions import ConditionNaming
+
+    naming = ConditionNaming.from_config(config)
+    obs = _read_obs(config, needs=("vcc_set",))
+    if "vcc_set" not in obs.columns:
+        raise ValueError("split.source=vcc needs obs['vcc_set'] - build the cache with "
+                         "scripts/vcc_prepare.py")
+    frame = obs[["condition", "vcc_set"]].astype(str).drop_duplicates()
+    by_set: dict[str, list[str]] = {}
+    for condition, which in zip(frame["condition"], frame["vcc_set"]):
+        if not naming.is_control(condition):
+            by_set.setdefault(which, []).append(condition)
+    for which in ("train", "validation", "test"):
+        if not by_set.get(which):
+            raise ValueError(f"split.source=vcc: no {which} conditions in the cache")
+    sets = {k: sorted(set(v)) for k, v in by_set.items()}
+    clash = [c for c in sets["train"] if c in sets["validation"] or c in sets["test"]]
+    if clash or set(sets["validation"]) & set(sets["test"]):
+        raise ValueError(f"split.source=vcc: a condition sits in two sets {clash[:5]}")
+    if config["split"].get("validation"):
+        test, excluded = sets["validation"], sets["test"]
+    else:
+        test, excluded = sets["test"], sets["validation"]
+    present = sorted(set(frame["condition"]))
+    held = set(test) | set(excluded)
+    train = [c for c in present if c not in held]
+    return [{"train": train, "test": test, "excluded": excluded, "train_doubles": [],
+             "held_out_singles": list(test) + list(excluded)}]
+
+
 def folds_generated(config: dict) -> list[dict[str, Any]]:
     """Make a split for a dataset that ships none.
 
@@ -500,6 +545,8 @@ def folds(config: dict, method: str | None = None) -> list[dict[str, Any]]:
         return folds_from_list(config)
     if source == "generated":
         return folds_generated(config)
+    if source == "vcc":
+        return folds_vcc(config)
     reference = load(config["split"]["reference_pkl"])
     if config["split"].get("validation"):
         fold = int(config["split"]["fold"])
@@ -543,6 +590,17 @@ def validate(config: dict) -> dict[str, Any]:
                 "combinations_sizes": [], "source": "list",
                 "additive_test_pairwise_overlap": (0, 0),
                 "doubles_train_in_every_fold": len(fold["train_doubles"])}
+
+    if source == "vcc":
+        fold = folds_vcc(config)[0]
+        overlap = set(fold["train"]) & (set(fold["test"]) | set(fold["excluded"]))
+        if overlap:
+            raise ValueError(f"vcc split puts {overlap} in both train and test")
+        return {"n_folds": 1, "reference_ok": True, "combinations_derived": False,
+                "additive_sizes": [(len(fold["train"]), len(fold["test"]))],
+                "combinations_sizes": [], "source": "vcc",
+                "additive_test_pairwise_overlap": (0, 0),
+                "doubles_train_in_every_fold": 0}
 
     if source == "obs_column":
         fold = folds_from_obs(config)[0]
