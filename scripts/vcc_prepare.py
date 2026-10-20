@@ -51,6 +51,10 @@ import scipy.sparse as sp
 FILES = (("train", "train/adata_Training.h5ad"),
          ("validation", "validation/adata_Validation.h5ad"),
          ("test", "test/adata_Test.h5ad"))
+# The released sizes in bytes (the bucket's own listing, 2026-10-20). A file that is
+# still downloading opens - HDF5 only notices the missing tail when it reaches it - so
+# the size is checked before anything is read.
+EXPECTED_BYTES = {"train": 15482497461, "validation": 6928967541, "test": 11950739168}
 CONTROL_SOURCE = "non-targeting"
 CONTROL = "ctrl"
 
@@ -136,6 +140,8 @@ def main() -> None:
     parser.add_argument("--out-dir", default="data/vcc")
     parser.add_argument("--n-hvg", type=int, default=5000)
     parser.add_argument("--chunk", type=int, default=20000)
+    parser.add_argument("--skip-size-check", action="store_true",
+                        help="for a test file that is not the release")
     args = parser.parse_args()
 
     files = []
@@ -143,6 +149,11 @@ def main() -> None:
         path = os.path.join(args.root, relative)
         if not os.path.exists(path):
             raise SystemExit(f"missing {path}")
+        size = os.path.getsize(path)
+        if not args.skip_size_check and size != EXPECTED_BYTES[name]:
+            raise SystemExit(f"{path} is {size:,} bytes, the release is "
+                             f"{EXPECTED_BYTES[name]:,} - still downloading? Rerun the "
+                             f"download command; curl -C - resumes where it stopped")
         files.append((name, CountFile(path)))
     genes = files[0][1].genes
     for name, handle in files[1:]:
