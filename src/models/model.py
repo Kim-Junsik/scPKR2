@@ -43,6 +43,7 @@ import torch
 from torch import nn
 
 from .generator import GeneratorResponse
+from .latent import LatentEncoder
 from .modulation import PerturbationModulation
 from .realise import HurdleRealisation
 
@@ -67,13 +68,27 @@ class PathwayModulation(nn.Module):
         # generator per perturbation on the observables, exponentiated. Read with
         # .get("mlp") so every run trained before the key existed rebuilds as stage 1.
         self.response = str(config["model"].get("response", "mlp"))
+        # Learned coordinates beside the fixed ones - docs/DESIGN_HYBRID.md. The
+        # generator acts on [Phi(x); z(x); 1]; the decoder still reads only how far that
+        # moved, so nothing has to be reconstructed from z.
+        latent_dim = int(config["model"].get("latent_dim", 0))
+        if latent_dim and self.response != "generator":
+            raise ValueError("model.latent_dim adds coordinates for generators to act on; "
+                             f"model.response={self.response!r} has none")
+        if latent_dim and str(config["model"].get("generator_mask", "none")) != "none":
+            raise ValueError("model.latent_dim with a generator mask is not defined: the "
+                             "mask names KEGG coordinates and z has none")
+        self.latent = (LatentEncoder(self.n_genes, int(config["model"].get("latent_hidden",
+                                                                          256)), latent_dim)
+                       if latent_dim else None)
+        self.coordinate_dim = observables.dim + latent_dim
         # The generator's graph, docs/DESIGN_GRAPH.md. Built from the data in build_model
         # and passed in, because the correlation control reads training control cells.
         self.graph_summary = graph_summary
         self.knowledge_summary = knowledge_summary
         if self.response == "generator":
             self.modulation = GeneratorResponse(
-                config, observables.dim, self.n_genes, n_perturbations,
+                config, self.coordinate_dim, self.n_genes, n_perturbations,
                 detection=detection, dispersion=dispersion, ceiling=ceiling,
                 graph_mask=graph_mask, knowledge=knowledge)
         elif str(config["model"].get("perturbation_knowledge", "none")) != "none":
@@ -169,7 +184,12 @@ class PathwayModulation(nn.Module):
     def forward(self, x: torch.Tensor,
                 perturbations: list[int]) -> dict[str, torch.Tensor]:
         """Head parameters for the predicted population. `mean` is the prediction."""
-        return self.modulation(x, self.observables(x), perturbations)
+        return self.modulation(x, self.coordinates(x), perturbations)
+
+    def coordinates(self, x: torch.Tensor) -> torch.Tensor:
+        """What the generators act on: Phi(x), or [Phi(x); z(x)] with learned ones."""
+        phi = self.observables(x)
+        return phi if self.latent is None else torch.cat([phi, self.latent(x)], dim=1)
 
     def predict(self, x: torch.Tensor, perturbations: list[int]) -> torch.Tensor:
         """Realised cells, [B, G]. soft returns mu exactly; sample draws around it."""
@@ -190,6 +210,8 @@ class PathwayModulation(nn.Module):
         for name, parameter in self.modulation.named_parameters():
             group = name.split(".")[0]
             counts[group] = counts.get(group, 0) + int(parameter.numel())
+        if self.latent is not None:
+            counts["latent"] = sum(p.numel() for p in self.latent.parameters())
         counts["head"] = sum(p.numel() for p in self.head.parameters())
         counts["total"] = sum(counts.values())
         return counts

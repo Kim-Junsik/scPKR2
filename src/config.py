@@ -267,6 +267,10 @@ DEFAULTS: dict[str, Any] = {
         # known about it, c_a = c_bar + E k_a + delta_a (src/data/knowledge.py).
         #   none    the lookup table, as before    zero    the encoder with k_a = 0
         #   string  STRING spectral embedding      moa     drug mechanism one-hot
+        # docs/DESIGN_HYBRID.md: learned coordinates concatenated to the fixed ones,
+        # p = [Phi(x); z(x); 1]. 0 = none (every model before). Generators only.
+        "latent_dim": 0,
+        "latent_hidden": 256,
         "perturbation_knowledge": "none",
         "knowledge_shuffle": False,        # the control: K's rows permuted among the
         "knowledge_seed": None,            #   covered perturbations; None = train.seed
@@ -552,6 +556,9 @@ DEFAULTS: dict[str, Any] = {
         # field. The endpoint is then available in closed form and there is no
         # integrator: exp(B_S) p0, one matrix exponential per condition.
         "fm_weight": 1.0,
+        # docs/DESIGN_HYBRID.md 2: the Brownian-bridge width of the FM interpolant.
+        # 0 is the deterministic straight path, exactly as before.
+        "fm_sigma": 0.0,
         # exp(B_S) p0 against p1, over the WHOLE BATCH rather than one mean point.
         # scPKFM could only afford the mean point because RK4 cost n_steps * 4 field
         # evaluations per cell, and its own plan recorded the batch version as the

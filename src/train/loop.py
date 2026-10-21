@@ -102,6 +102,32 @@ def condition_means(data, stats, conditions: list[str], device: str) -> dict:
             for c in conditions}
 
 
+def bridge_interpolant(p0: torch.Tensor, p1: torch.Tensor, sigma: float
+                       ) -> tuple[torch.Tensor, torch.Tensor]:
+    """(p_t, u_t): a point on the path from p0 to p1 and the velocity FM regresses on.
+
+    docs/DESIGN_HYBRID.md 2. sigma = 0 is the straight path with t ~ U(0, 1), drawn
+    exactly as before. sigma > 0 is a Brownian bridge - the interpolant and conditional
+    velocity of Tong et al.'s SB-CFM - with t kept off the ends, where the bridge's
+    velocity term divides by sqrt(t(1 - t)):
+
+        p_t = (1 - t) p0 + t p1 + sigma sqrt(t(1 - t)) eps
+        u_t = (p1 - p0) + sigma (1 - 2t) / (2 sqrt(t(1 - t))) eps
+
+    A control cell and a perturbed cell are different cells, so p1 - p0 is mostly their
+    individual difference. The bridge makes that difference noise to be averaged over
+    instead of a target to be fitted (FINDINGS 18: the deterministic loss sat at 1.79).
+    """
+    t = torch.rand(p0.shape[0], 1, device=p0.device, dtype=p0.dtype)
+    if sigma <= 0:
+        return (1.0 - t) * p0 + t * p1, p1 - p0
+    t = 0.01 + 0.98 * t
+    eps = torch.randn_like(p0)
+    root = torch.sqrt(t * (1.0 - t))
+    p_t = (1.0 - t) * p0 + t * p1 + sigma * root * eps
+    return p_t, (p1 - p0) + sigma * (1.0 - 2.0 * t) / (2.0 * root) * eps
+
+
 def train(model, data, stats, train_conditions: list[str], config: dict,
           device: str, rng: np.random.Generator, log, run_dir: str | None = None) -> dict:
     """The whole of training. Returns the last epoch's loss parts."""
@@ -125,6 +151,7 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
     batch = int(train_cfg["batch_size"])
     fm_weight = float(train_cfg["fm_weight"])
     endpoint_weight = float(train_cfg["endpoint_weight"])
+    fm_sigma = float(train_cfg.get("fm_sigma", 0.0))
     gene_weight = float(train_cfg["gene_endpoint_weight"])
     mmd_weight = float(train_cfg["mmd_weight"])
     # docs/DESIGN_PRIOR.md: what the dense branch beside a KEGG backbone pays per unit of
@@ -191,6 +218,13 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                                          stop_thr=float(train_cfg["uot_stop_thr"]))
             p0c, p1c = p0[rows], p1[columns]
             x_target_c = x_target[columns]
+            # With learned coordinates FM and the endpoint act on [Phi; z]; the pairing
+            # above stays on Phi alone, so it is not chasing an encoder that moves while
+            # it trains (docs/DESIGN_HYBRID.md 1).
+            if getattr(model, "latent", None) is not None and model.has_generators and (
+                    fm_weight > 0 or endpoint_weight > 0):
+                p0c = model.coordinates(x_source)[rows]
+                p1c = model.coordinates(x_target)[columns]
 
             loss = torch.zeros((), device=device)
 
@@ -203,10 +237,9 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                 # One t PER SAMPLE. A single scalar for the batch gives the time axis one
                 # sample per step, so [0, 1] is covered sparsely; scPKFM measured the
                 # consequence as a predicted displacement 72 % of the true one.
-                t = torch.rand(p0c.shape[0], 1, device=device)
-                p_t = (1.0 - t) * p0c + t * p1c
+                p_t, target = bridge_interpolant(p0c, p1c, fm_sigma)
                 fm = torch.nn.functional.mse_loss(
-                    model.modulation.velocity(p_t, perturbations), p1c - p0c)
+                    model.modulation.velocity(p_t, perturbations), target)
                 loss = loss + fm_weight * fm
                 totals["fm"].append(float(fm))
 
