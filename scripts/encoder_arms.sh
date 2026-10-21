@@ -7,6 +7,8 @@
 #   bash scripts/encoder_arms.sh combo-val                   H0 on ComboSciPlex
 #   P=0.5 EPOCHS=2500 bash scripts/encoder_arms.sh combo-test   C1: {D, M, MP} x 3 seeds
 #   P=0.5 bash scripts/encoder_arms.sh norman                N1: E on norman fold 3
+#   P=0.25 bash scripts/encoder_arms.sh norman-controls      N2: S and N on norman fold 3,
+#                                                            the controls N1 lacked (5.2)
 #   EPOCHS=2500 bash scripts/encoder_arms.sh combo-dose      secondary: {M, MP} at dropout
 #                                                            0.5 on the test split (5.1)
 #
@@ -82,7 +84,7 @@ knowledge_of() {
 }
 
 if [ "$#" -eq 0 ]; then
-  echo "usage: bash scripts/encoder_arms.sh vcc-val | vcc-test | combo-val | combo-test | norman" >&2
+  echo "usage: bash scripts/encoder_arms.sh vcc-val | vcc-test | combo-val | combo-test | norman | norman-controls" >&2
   exit 2
 fi
 for step in "$@"; do
@@ -92,8 +94,8 @@ for step in "$@"; do
       [ -n "$EPOCHS" ] || { echo "combo-dose needs EPOCHS, the length H0 chose" >&2; exit 2; } ;;
     vcc-test|combo-test)
       [ -n "$P" ] && [ -n "$EPOCHS" ] || { echo "$step needs P and EPOCHS, the values H0 chose" >&2; exit 2; } ;;
-    norman)
-      [ -n "$P" ] || { echo "norman needs P, the value VCC's H0 chose" >&2; exit 2; } ;;
+    norman|norman-controls)
+      [ -n "$P" ] || { echo "$step needs P, the value VCC's H0 chose" >&2; exit 2; } ;;
     *) echo "unknown step '$step'" >&2; exit 2 ;;
   esac
   case "$step" in
@@ -158,6 +160,16 @@ for step in "$@"; do
       for seed in $SEEDS; do
         train "nE_s${seed}" "${NORMAN[*]}" "train.seed=${seed}" "train.epochs=${NORMAN_EPOCHS}" \
           "model.perturbation_dropout=${P}" "$(knowledge_of E)"
+      done ;;
+    norman-controls)
+      # Same settings as nE, knowledge shuffled (S) or absent (N): is the gain N1 found the
+      # knowledge, or the dropout every encoder run trains with?
+      for arm in S N; do
+        for seed in $SEEDS; do
+          train "n${arm}_s${seed}" "${NORMAN[*]}" "train.seed=${seed}" \
+            "train.epochs=${NORMAN_EPOCHS}" "model.perturbation_dropout=${P}" \
+            "$(knowledge_of $arm)"
+        done
       done ;;
   esac
 done
