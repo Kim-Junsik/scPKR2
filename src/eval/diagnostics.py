@@ -146,9 +146,15 @@ def build_model(config: dict, data, stats, fold: dict, method: str, device: str)
             with torch.no_grad():
                 control_phi = observables(torch.as_tensor(
                     np.asarray(data.x[data.control_rows], dtype=np.float32))).numpy()
-        graph_mask, graph_summary = generator_mask(
-            config, observables, control_phi,
-            bool(config["model"].get("generator_constant", True)))
+        # Built only when a graph is asked for. With none the generator makes its own
+        # all-ones mask at ITS size - which with learned coordinates (DESIGN_HYBRID.md)
+        # is larger than the KEGG block this function would size it to.
+        if config["model"].get("generator_mask", "none") != "none":
+            graph_mask, graph_summary = generator_mask(
+                config, observables, control_phi,
+                bool(config["model"].get("generator_constant", True)))
+        else:
+            graph_mask, graph_summary = None, {"kind": "none"}
     knowledge, knowledge_summary = None, None
     if config["model"].get("response", "mlp") == "generator":
         knowledge, knowledge_summary = knowledge_matrix(config, data.perturbations)
