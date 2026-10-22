@@ -9,6 +9,8 @@
 #   P=0.5 bash scripts/encoder_arms.sh norman                N1: E on norman fold 3
 #   P=0.25 bash scripts/encoder_arms.sh norman-controls      N2: S and N on norman fold 3,
 #                                                            the controls N1 lacked (5.2)
+#   P=0.25 EPOCHS=2500 bash scripts/encoder_arms.sh combo-zero   N on ComboSciPlex's test
+#                                                            split, beside D, M, MP (5.3)
 #   EPOCHS=2500 bash scripts/encoder_arms.sh combo-dose      secondary: {M, MP} at dropout
 #                                                            0.5 on the test split (5.1)
 #
@@ -84,7 +86,7 @@ knowledge_of() {
 }
 
 if [ "$#" -eq 0 ]; then
-  echo "usage: bash scripts/encoder_arms.sh vcc-val | vcc-test | combo-val | combo-test | norman | norman-controls" >&2
+  echo "usage: bash scripts/encoder_arms.sh vcc-val | vcc-test | combo-val | combo-test | combo-zero | norman | norman-controls" >&2
   exit 2
 fi
 for step in "$@"; do
@@ -92,7 +94,7 @@ for step in "$@"; do
     vcc-val|combo-val) ;;
     combo-dose)
       [ -n "$EPOCHS" ] || { echo "combo-dose needs EPOCHS, the length H0 chose" >&2; exit 2; } ;;
-    vcc-test|combo-test)
+    vcc-test|combo-test|combo-zero)
       [ -n "$P" ] && [ -n "$EPOCHS" ] || { echo "$step needs P and EPOCHS, the values H0 chose" >&2; exit 2; } ;;
     norman|norman-controls)
       [ -n "$P" ] || { echo "$step needs P, the value VCC's H0 chose" >&2; exit 2; } ;;
@@ -148,6 +150,14 @@ for step in "$@"; do
           train "c${arm}_s${seed}" "${COMBO[*]}" "${COMBO_TEST[*]}" "train.seed=${seed}" \
             "train.epochs=${EPOCHS}" "model.perturbation_dropout=${P}" "$(knowledge_of $arm)"
         done
+      done ;;
+    combo-zero)
+      # The encoder with nothing to say: c_a = c_bar + delta_a, the same dropout. Where
+      # does MP's 1.5884 come from - any grouping of the drugs, or the shared component
+      # and the dropout alone (FINDINGS 27)?
+      for seed in $SEEDS; do
+        train "cN_s${seed}" "${COMBO[*]}" "${COMBO_TEST[*]}" "train.seed=${seed}" \
+          "train.epochs=${EPOCHS}" "model.perturbation_dropout=${P}" "$(knowledge_of N)"
       done ;;
     combo-dose)
       for arm in M MP; do
