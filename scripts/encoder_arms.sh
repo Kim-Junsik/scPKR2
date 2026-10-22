@@ -11,6 +11,9 @@
 #                                                            the controls N1 lacked (5.2)
 #   P=0.25 EPOCHS=2500 bash scripts/encoder_arms.sh combo-zero   N on ComboSciPlex's test
 #                                                            split, beside D, M, MP (5.3)
+#   P=0.25 bash scripts/encoder_arms.sh norman-confirm       N3: E, S, N on norman folds
+#                                                            0 1 2 4 x 3 seeds (5.4)
+#   P=0.25 FOLDS="0 1" bash scripts/encoder_arms.sh norman-confirm   part of it, per pane
 #   EPOCHS=2500 bash scripts/encoder_arms.sh combo-dose      secondary: {M, MP} at dropout
 #                                                            0.5 on the test split (5.1)
 #
@@ -36,6 +39,7 @@ VCC_CACHE="${VCC_CACHE:-data/vcc/vcc2025_cache.h5ad}"
 VCC_VAL_EPOCHS="${VCC_VAL_EPOCHS:-100 250}"
 COMBO_VAL_EPOCHS="${COMBO_VAL_EPOCHS:-1000 2500}"
 NORMAN_EPOCHS="${NORMAN_EPOCHS:-250}"
+FOLDS="${FOLDS:-0 1 2 4}"
 
 # Stage 2's D settings: dense generator, ZCA, no observable-space losses.
 MODEL=(
@@ -86,7 +90,7 @@ knowledge_of() {
 }
 
 if [ "$#" -eq 0 ]; then
-  echo "usage: bash scripts/encoder_arms.sh vcc-val | vcc-test | combo-val | combo-test | combo-zero | norman | norman-controls" >&2
+  echo "usage: bash scripts/encoder_arms.sh vcc-val | vcc-test | combo-val | combo-test | combo-zero | norman | norman-controls | norman-confirm" >&2
   exit 2
 fi
 for step in "$@"; do
@@ -96,7 +100,7 @@ for step in "$@"; do
       [ -n "$EPOCHS" ] || { echo "combo-dose needs EPOCHS, the length H0 chose" >&2; exit 2; } ;;
     vcc-test|combo-test|combo-zero)
       [ -n "$P" ] && [ -n "$EPOCHS" ] || { echo "$step needs P and EPOCHS, the values H0 chose" >&2; exit 2; } ;;
-    norman|norman-controls)
+    norman|norman-controls|norman-confirm)
       [ -n "$P" ] || { echo "$step needs P, the value VCC's H0 chose" >&2; exit 2; } ;;
     *) echo "unknown step '$step'" >&2; exit 2 ;;
   esac
@@ -170,6 +174,19 @@ for step in "$@"; do
       for seed in $SEEDS; do
         train "nE_s${seed}" "${NORMAN[*]}" "train.seed=${seed}" "train.epochs=${NORMAN_EPOCHS}" \
           "model.perturbation_dropout=${P}" "$(knowledge_of E)"
+      done ;;
+    norman-confirm)
+      # N3: the fold 3 result, on the folds no Norman choice was made on.
+      for fold in $FOLDS; do
+        for arm in E S N; do
+          for seed in $SEEDS; do
+            train "n${arm}_f${fold}_s${seed}" data.raw_h5ad=data/norman/norman.h5ad \
+              split.source=reference split.method=additive "split.fold=${fold}" \
+              "data.cache_h5ad=assets/norman_scanpy5000_additive_fold${fold}.h5ad" \
+              "train.seed=${seed}" "train.epochs=${NORMAN_EPOCHS}" \
+              "model.perturbation_dropout=${P}" "$(knowledge_of $arm)"
+          done
+        done
       done ;;
     norman-controls)
       # Same settings as nE, knowledge shuffled (S) or absent (N): is the gain N1 found the
