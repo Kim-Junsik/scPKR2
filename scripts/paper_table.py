@@ -171,8 +171,8 @@ def main() -> None:
                         help="the L2 pass transports cells; cpu is the default because "
                              "the usual reason to run this is that a sweep holds the gpu")
     parser.add_argument("--n-cells", type=int, default=256,
-                        help="control cells transported per condition. The reported "
-                             "tables used 1024 (eval.n_gen_cells)")
+                        help="control cells transported per condition. 0 = as many as "
+                             "the condition has real cells (N_p, scDFM eq. 15)")
     parser.add_argument("--infer-top-gene", type=int, default=None,
                         help="score L2 on scanpy-HVG genes of the test subset, as "
                              "scDFM does (their run.sh uses 1000)")

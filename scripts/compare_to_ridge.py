@@ -71,7 +71,8 @@ def main() -> None:
     parser.add_argument("--gate", default="soft", choices=["soft", "hard", "sample"],
                         help="soft by default because the ridge row is a mean vector")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--n-cells", type=int, default=4096)
+    parser.add_argument("--n-cells", type=int, default=4096,
+                        help="0 = as many as the condition has real cells (N_p, scDFM eq. 15)")
     parser.add_argument("--infer-top-gene", type=int, default=1000)
     parser.add_argument("--ridge-alpha", type=float, default=1.0)
     parser.add_argument("--group", default="all",
@@ -88,7 +89,7 @@ def main() -> None:
 
     print("")
     print(f"{args.group} held-out conditions, gate={args.gate}, "
-          f"{args.n_cells} cells, {args.infer_top_gene} genes"
+          f"{args.n_cells if args.n_cells > 0 else 'N_p'} cells, {args.infer_top_gene} genes"
           + (", mean bounded" if args.bound_mean else ""))
     print("")
     print(f"  {'run':34s} {'ridge':>8s} {'model':>8s} {'diff':>8s}  n")

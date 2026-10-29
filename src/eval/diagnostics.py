@@ -263,7 +263,11 @@ def measure_transport(model, data, stats, conditions: list[str], config,
     for condition in conditions:
         if condition == data.control_condition or not stats.has(condition):
             continue
-        pick = rng.choice(control.shape[0], size=min(n_cells, control.shape[0]),
+        # n_cells <= 0 predicts as many cells as the condition has real ones, N_p in
+        # scDFM's eq. (15). The five cell-eval columns use 128 (their test() hard-codes
+        # N = 128), but no released code computes L2, so eq. (15) is its only definition.
+        size = int(stats.n[condition]) if n_cells <= 0 else n_cells
+        pick = rng.choice(control.shape[0], size=min(size, control.shape[0]),
                           replace=False)
         sample = control[pick]
         perturbations = [data.pert_index[g] for g in data.naming.genes(condition)]
