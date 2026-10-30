@@ -1,10 +1,13 @@
 """Score a run on the Virtual Cell Challenge 2025 test set the way its leaderboard did.
 
-    python scripts/vcc_celleval.py export results/runs/vEp0fm_s0 --gate sample --bound-mean --device cuda
-    python scripts/vcc_celleval.py baseline
-    python scripts/vcc_celleval.py score results/runs/vEp0fm_s0/vcc_sample_bounded --celleval-python .env-ce-scdfm/bin/python --threads 16
-    python scripts/vcc_celleval.py score results/vcc_cellmean --celleval-python .env-ce-scdfm/bin/python --threads 16
+    python scripts/vcc_celleval.py export results/runs/vEp0fm_s0 --gate sample --bound-mean --device cuda --root nvcc/data/vcc/2025
+    python scripts/vcc_celleval.py baseline --root nvcc/data/vcc/2025
+    python scripts/vcc_celleval.py score results/runs/vEp0fm_s0/vcc_sample_bounded --celleval-python .env-ce-scdfm/bin/python --threads 16 --root nvcc/data/vcc/2025
+    python scripts/vcc_celleval.py score results/vcc_cellmean --celleval-python .env-ce-scdfm/bin/python --threads 16 --root nvcc/data/vcc/2025
     python scripts/vcc_celleval.py table results/runs/vEp0fm_s0/vcc_sample_bounded --base results/vcc_cellmean
+
+--root is where the release sits: data/vcc/2025 by default, nvcc/data/vcc/2025 on the
+server.
 
 WHAT THE LEADERBOARD SCORED. cell-eval's 'vcc' profile: three metrics over all 18,080
 genes, each averaged over the 100 test perturbations.
@@ -72,6 +75,16 @@ METRICS = {"DES": ("overlap_at_N", "one"),
            "MAE": ("mae", "zero")}
 
 
+def require(root: str, relative: str) -> str:
+    """The path of one released file, or a message that says where to point --root."""
+    path = os.path.join(root, relative)
+    if not os.path.exists(path):
+        raise SystemExit(f"missing {path}. --root names the folder holding train/, "
+                         f"validation/ and test/ of the release; on the server it is "
+                         f"nvcc/data/vcc/2025 (scripts/vcc_prepare.py's docstring)")
+    return path
+
+
 def training_controls(root: str, median: float, chunk: int = 20000):
     """The training file's control cells over every gene, normalised as the cache is.
 
@@ -82,6 +95,7 @@ def training_controls(root: str, median: float, chunk: int = 20000):
     import scipy.sparse as sp
     from vcc_prepare import CountFile
 
+    require(root, TRAIN_FILE)
     handle = CountFile(os.path.join(root, TRAIN_FILE))
     genes = handle.genes
     pieces = []
@@ -126,7 +140,7 @@ def write_h5ad(path: str, labels: list[str], genes, blocks) -> None:
 
 
 def read_counts(root: str) -> pd.DataFrame:
-    counts = pd.read_csv(os.path.join(root, COUNTS_FILE))
+    counts = pd.read_csv(require(root, COUNTS_FILE))
     if CONTROL in set(counts["target_gene"]):
         counts = counts[counts["target_gene"] != CONTROL]
     return counts.reset_index(drop=True)
@@ -228,10 +242,11 @@ def score(args) -> None:
     interpreter = find_celleval_python(args.celleval_python)
     check_runnable(interpreter)
     pred = os.path.abspath(os.path.join(args.export_dir, "pred.h5ad"))
-    real = os.path.abspath(args.real or os.path.join(args.root, TEST_FILE))
-    for path in (pred, real):
-        if not os.path.exists(path):
-            raise SystemExit(f"missing {path}")
+    if not os.path.exists(pred):
+        raise SystemExit(f"missing {pred} - run the export step first")
+    real = os.path.abspath(args.real or require(args.root, TEST_FILE))
+    if not os.path.exists(real):
+        raise SystemExit(f"missing {real}")
     out_dir = os.path.abspath(os.path.join(args.export_dir, args.results_tag))
     os.makedirs(out_dir, exist_ok=True)
     script = os.path.join(out_dir, "_score.py")
@@ -294,12 +309,16 @@ def table(args) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", default="data/vcc/2025",
-                        help="the released files, as scripts/vcc_prepare.py reads them")
-    parser.add_argument("--means", default="data/vcc/vcc2025_means.npz")
+    # On every step, after its name, so `export <run> --root ...` reads the way it is typed.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--root", default="data/vcc/2025",
+                        help="the released files, as scripts/vcc_prepare.py reads them; "
+                             "on the server they sit at nvcc/data/vcc/2025")
+    common.add_argument("--means", default="data/vcc/vcc2025_means.npz")
     steps = parser.add_subparsers(dest="step", required=True)
 
-    export = steps.add_parser("export", help="the model's prediction, as pred.h5ad")
+    export = steps.add_parser("export", parents=[common],
+                              help="the model's prediction, as pred.h5ad")
     export.add_argument("run_dir")
     export.add_argument("--gate", default="sample", choices=["soft", "sample"],
                         help="sample by default: DES is a DE test on cells, and the soft "
@@ -307,10 +326,12 @@ def main() -> None:
     export.add_argument("--bound-mean", action="store_true")
     export.add_argument("--device", default="cuda")
 
-    baseline = steps.add_parser("baseline", help="cell-eval's cell-mean baseline")
+    baseline = steps.add_parser("baseline", parents=[common],
+                                help="cell-eval's cell-mean baseline")
     baseline.add_argument("--out", default="results/vcc_cellmean")
 
-    scoring = steps.add_parser("score", help="run cell-eval's vcc profile on an export")
+    scoring = steps.add_parser("score", parents=[common],
+                               help="run cell-eval's vcc profile on an export")
     scoring.add_argument("export_dir")
     scoring.add_argument("--real", default=None,
                          help="the released test file; defaults to <root>/" + TEST_FILE)
