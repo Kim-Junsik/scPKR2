@@ -25,10 +25,12 @@ Results tab).
 THE FILES.
 - pred.h5ad holds, for each test perturbation, as many cells as the release's
   pert_counts_Test.csv. Each is a training control cell, transported by the model on
-  the model's genes and left as it was on the rest. The training control cells
-  themselves follow.
-- Those controls are the test file's too: the three released files carry the same
-  38,176 control cells, in the same order.
+  the model's genes and left as it was on the rest. The control cells themselves
+  follow.
+- The three released files carry the same 38,176 control cells, identical in every
+  count and in the same order. They are therefore read from the test file by default
+  (--controls), which scoring needs anyway. Only test/ of the release has to be on the
+  machine.
 - Values are log1p(count / library * S), with S the training median library, which is
   the cache's recipe. cell-eval leaves log-normalised input alone.
 - The real side is the released test file as it is: raw counts, which cell-eval
@@ -79,14 +81,20 @@ def require(root: str, relative: str) -> str:
     """The path of one released file, or a message that says where to point --root."""
     path = os.path.join(root, relative)
     if not os.path.exists(path):
-        raise SystemExit(f"missing {path}. --root names the folder holding train/, "
-                         f"validation/ and test/ of the release; on the server it is "
-                         f"nvcc/data/vcc/2025 (scripts/vcc_prepare.py's docstring)")
+        raise SystemExit(f"missing {path}. --root names the folder holding the "
+                         f"release's test/ (and train/, for --controls train); on the "
+                         f"server it is nvcc/data/vcc/2025 (scripts/vcc_prepare.py's "
+                         f"docstring)")
     return path
 
 
-def training_controls(root: str, median: float, chunk: int = 20000):
-    """The training file's control cells over every gene, normalised as the cache is.
+def control_cells(root: str, median: float, source: str, chunk: int = 20000):
+    """The release's control cells over every gene, normalised as the cache is.
+
+    `source` names the file they are read from. The test file is the default because
+    scoring needs that file anyway, so the 15.5 GB training file need not be on the
+    machine at all. The three files carry the same 38,176 control cells, identical in
+    every count (compared in full, 2026-10-30), so either source gives the same values.
 
     The whole file is streamed rather than the control rows read one by one. They are
     spread through it, and one read per row of a chunked HDF5 dataset is far slower than
@@ -95,8 +103,8 @@ def training_controls(root: str, median: float, chunk: int = 20000):
     import scipy.sparse as sp
     from vcc_prepare import CountFile
 
-    require(root, TRAIN_FILE)
-    handle = CountFile(os.path.join(root, TRAIN_FILE))
+    relative = TEST_FILE if source == "test" else TRAIN_FILE
+    handle = CountFile(require(root, relative))
     genes = handle.genes
     pieces = []
     t0 = time.time()
@@ -164,7 +172,8 @@ def export_model(args) -> None:
                          f"not the test set")
 
     store = np.load(args.means, allow_pickle=False)
-    genes, controls = training_controls(args.root, float(store["library_median"]))
+    genes, controls = control_cells(args.root, float(store["library_median"]),
+                                    args.controls)
     column = {str(g): i for i, g in enumerate(genes)}
     model_columns = np.array([column[str(g)] for g in data.gene_names])
     condition_of = {str(data.naming.genes(c)[0]): c for c in fold["test"]}
@@ -215,7 +224,8 @@ def export_baseline(args) -> None:
     # cell-eval's _build_pert_baseline does with as_delta=False.
     rows = np.isin(sets, ["train", "control"])
     vector = store["means"][rows].astype(np.float64).mean(axis=0).astype(np.float32)
-    genes, controls = training_controls(args.root, float(store["library_median"]))
+    genes, controls = control_cells(args.root, float(store["library_median"]),
+                                    args.controls)
     if not np.array_equal(np.asarray(genes, dtype=str),
                           np.asarray(store["gene_names"], dtype=str)):
         raise SystemExit("the means file and the training file disagree on the genes")
@@ -315,6 +325,10 @@ def main() -> None:
                         help="the released files, as scripts/vcc_prepare.py reads them; "
                              "on the server they sit at nvcc/data/vcc/2025")
     common.add_argument("--means", default="data/vcc/vcc2025_means.npz")
+    common.add_argument("--controls", default="test", choices=["test", "train"],
+                        help="the released file the control cells are read from. They "
+                             "are the same cells in both; test by default, so the "
+                             "training file is not needed")
     steps = parser.add_subparsers(dest="step", required=True)
 
     export = steps.add_parser("export", parents=[common],
