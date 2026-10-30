@@ -1,13 +1,12 @@
 """Score a run on the Virtual Cell Challenge 2025 test set the way its leaderboard did.
 
-    python scripts/vcc_celleval.py export results/runs/vEp0fm_s0 --gate sample --bound-mean --device cuda --root nvcc/data/vcc/2025
-    python scripts/vcc_celleval.py baseline --root nvcc/data/vcc/2025
-    python scripts/vcc_celleval.py score results/runs/vEp0fm_s0/vcc_sample_bounded --celleval-python .env-ce-scdfm/bin/python --threads 16 --root nvcc/data/vcc/2025
-    python scripts/vcc_celleval.py score results/vcc_cellmean --celleval-python .env-ce-scdfm/bin/python --threads 16 --root nvcc/data/vcc/2025
+    python scripts/vcc_celleval.py export results/runs/vEp0fm_s0 --gate sample --bound-mean --device cuda
+    python scripts/vcc_celleval.py baseline
+    python scripts/vcc_celleval.py score results/runs/vEp0fm_s0/vcc_sample_bounded --celleval-python .env-ce-scdfm/bin/python --threads 16
+    python scripts/vcc_celleval.py score results/vcc_cellmean --celleval-python .env-ce-scdfm/bin/python --threads 16
     python scripts/vcc_celleval.py table results/runs/vEp0fm_s0/vcc_sample_bounded --base results/vcc_cellmean
 
---root is where the release sits: data/vcc/2025 by default, nvcc/data/vcc/2025 on the
-server.
+--root is where the release sits, data/vcc/2025 by default. Only test/ is needed.
 
 WHAT THE LEADERBOARD SCORED. cell-eval's 'vcc' profile: three metrics over all 18,080
 genes, each averaged over the 100 test perturbations.
@@ -45,6 +44,12 @@ cell gets that same vector, and the control cells are appended.
 
 Both exports are dense float32, gzip-compressed on disk. cell-eval holds each in memory
 whole, about 12.4 GB, beside the real file.
+
+/dev/shm. pdex copies each matrix, densified, into one 12.4 GB shared-memory segment,
+which a container's 8 GB /dev/shm cannot hold (exit -7). The score step therefore keeps
+that segment as a file in the results folder (SHM_PATCH, --shm-dir). That needs ~12.4 GB
+of free disk while it runs and the RAM to keep the file cached; exit -9 means the
+machine ran out of RAM.
 """
 
 from __future__ import annotations
@@ -52,8 +57,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import numpy as np
@@ -75,6 +82,70 @@ LEADERBOARD_BASE = {"DES": 0.097, "PDS": 0.509}
 METRICS = {"DES": ("overlap_at_N", "one"),
            "PDS": ("discrimination_score_l1", "one"),
            "MAE": ("mae", "zero")}
+
+# Put in front of SCORING_SCRIPT. Before its DE test, pdex 0.1.21 copies the whole matrix,
+# densified, into ONE POSIX shared-memory segment, whatever the worker count. For VCC
+# that is 170,846 x 18,080 float32 = 12.4 GB, and a container's /dev/shm is often 8 GB
+# (exit -7, SIGBUS). The norman-sized tables never came near that.
+#
+# With PDEX_SHM_DIR set, the segment becomes a file in that directory, mapped the same
+# way. pdex reaches it only through its module-level SharedMemory name (create=, size=,
+# name=, .name, .buf, .close(), .unlink()), so that name is the one thing replaced. The
+# matrix, the tests and the single BH correction over all perturbations are untouched.
+#
+# It runs at module level, outside the __main__ guard, on purpose. Forked workers
+# inherit the patched module, and spawned workers re-run this block when they re-import
+# the script.
+SHM_PATCH = '''
+import os as _os
+if _os.environ.get("PDEX_SHM_DIR"):
+    import mmap as _mmap
+    import uuid as _uuid
+
+    class _FileSharedMemory:
+        def __init__(self, name=None, create=False, size=0):
+            directory = _os.environ["PDEX_SHM_DIR"]
+            if create:
+                name = name or "pdex_%d_%s" % (_os.getpid(), _uuid.uuid4().hex[:8])
+                path = _os.path.join(directory, name)
+                fd = _os.open(path, _os.O_CREAT | _os.O_EXCL | _os.O_RDWR, 0o600)
+                try:
+                    _os.ftruncate(fd, size)
+                except BaseException:
+                    _os.close(fd)
+                    raise
+            else:
+                path = _os.path.join(directory, name)
+                fd = _os.open(path, _os.O_RDWR)
+                size = _os.fstat(fd).st_size
+            try:
+                self._mmap = _mmap.mmap(fd, size)
+            finally:
+                _os.close(fd)
+            self._buf = memoryview(self._mmap)
+            self._name, self._size, self._path = name, size, path
+
+        name = property(lambda self: self._name)
+        size = property(lambda self: self._size)
+        buf = property(lambda self: self._buf)
+
+        def close(self):
+            if self._buf is not None:
+                self._buf.release()
+                self._buf = None
+            if self._mmap is not None:
+                self._mmap.close()
+                self._mmap = None
+
+        def unlink(self):
+            try:
+                _os.unlink(self._path)
+            except FileNotFoundError:
+                pass
+
+    import pdex._single_cell as _pdex_single_cell
+    _pdex_single_cell.SharedMemory = _FileSharedMemory
+'''
 
 
 def require(root: str, relative: str) -> str:
@@ -261,13 +332,28 @@ def score(args) -> None:
     os.makedirs(out_dir, exist_ok=True)
     script = os.path.join(out_dir, "_score.py")
     with open(script, "w", encoding="utf-8") as handle:
-        handle.write(SCORING_SCRIPT)
+        handle.write(SHM_PATCH + SCORING_SCRIPT)
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    # A fresh folder of our own, so the cleanup below can never remove anything else.
+    # pdex unlinks its segment only on success, so a failed run would otherwise leave
+    # a 12.4 GB file behind.
+    shm_dir = None
+    if args.shm_dir != "dev":
+        base = os.path.abspath(args.shm_dir or out_dir)
+        os.makedirs(base, exist_ok=True)
+        shm_dir = tempfile.mkdtemp(prefix="pdex_shm_", dir=base)
+        env["PDEX_SHM_DIR"] = shm_dir
+        print(f"pdex's shared matrix goes to a file in {shm_dir} (needs ~12.4 GB of disk)")
     print(f"scoring {pred} against {real} (profile vcc) ...", flush=True)
-    completed = subprocess.run(
-        [interpreter, script, pred, real, out_dir, "vcc", CONTROL, PERT_COL,
-         str(args.threads)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        completed = subprocess.run(
+            [interpreter, script, pred, real, out_dir, "vcc", CONTROL, PERT_COL,
+             str(args.threads)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env)
+    finally:
+        if shm_dir:
+            shutil.rmtree(shm_dir, ignore_errors=True)
     print(completed.stdout)
     if completed.returncode != 0:
         print(completed.stderr[-4000:], file=sys.stderr)
@@ -352,6 +438,10 @@ def main() -> None:
     scoring.add_argument("--celleval-python", default=None)
     scoring.add_argument("--threads", type=int, default=1)
     scoring.add_argument("--results-tag", default="ce0542")
+    scoring.add_argument("--shm-dir", default=None,
+                         help="where pdex's 12.4 GB shared matrix is kept as a file "
+                              "(default: the results folder); 'dev' keeps pdex's own "
+                              "/dev/shm segment")
 
     tabulate = steps.add_parser("table", help="DES, PDS, MAE and Overall, as the "
                                               "leaderboard computes them")
