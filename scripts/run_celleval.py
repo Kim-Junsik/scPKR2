@@ -134,8 +134,18 @@ def check_runnable(interpreter: str) -> None:
         raise SystemExit(
             f"{interpreter} is a Windows interpreter and this is not Windows.\n"
             f"Build the Linux one instead:  {SETUP_HINT}")
-    probe = subprocess.run([interpreter, "-c", "import cell_eval"],
-                           capture_output=True, text=True)
+    try:
+        probe = subprocess.run([interpreter, "-c", "import cell_eval"],
+                               capture_output=True, text=True)
+    except FileNotFoundError:
+        # A venv built on one machine is not on the next one, and the bare OSError
+        # traceback names neither that nor how to build it.
+        raise SystemExit(
+            f"{interpreter} does not exist on this machine.\n"
+            f"Build it with:  {SETUP_HINT}\n"
+            f"The published-table scorer (.env-ce-scdfm) is built with:\n"
+            f"  python -m venv .env-ce-scdfm && "
+            f".env-ce-scdfm/bin/pip install -r requirements-celleval-scdfm.txt")
     if probe.returncode != 0:
         raise SystemExit(f"{interpreter} cannot import cell_eval:\n"
                          f"{probe.stderr[-1000:]}\nBuild it with:  {SETUP_HINT}")
