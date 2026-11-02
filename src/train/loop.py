@@ -128,6 +128,56 @@ def bridge_interpolant(p0: torch.Tensor, p1: torch.Tensor, sigma: float
     return p_t, (p1 - p0) + sigma * (1.0 - 2.0 * t) / (2.0 * root) * eps
 
 
+class MetricTargets:
+    """The constants the pearson and discrim terms compare a predicted mean against.
+
+    Built once from the training conditions' means. `scale` is their mean squared
+    (centred) effect, so a weight on either term is on gene_endpoint_weight's scale.
+    """
+
+    def __init__(self, data, stats, means: dict, tau: float, device: str):
+        self.names = list(means)
+        self.row = {c: i for i, c in enumerate(self.names)}
+        self.targets = torch.stack([means[c] for c in self.names])            # [C, G]
+        self.control = torch.as_tensor(stats.control, dtype=torch.float32,
+                                       device=device)
+        effects = self.targets - self.control
+        centred = effects - effects.mean(dim=1, keepdim=True)
+        self.effects = centred
+        self.scale = float(centred.square().sum(dim=1).mean())
+        # cell-eval's DS leaves the perturbed genes themselves out of the distance:
+        # a CRISPRa target moves by several log units and would decide every ranking.
+        column = {str(g): j for j, g in enumerate(data.gene_names)}
+        self.keep = {}
+        for c in self.names:
+            mask = torch.ones(self.targets.shape[1], dtype=torch.bool, device=device)
+            for g in data.naming.genes(c):
+                if g in column:
+                    mask[column[g]] = False
+            self.keep[c] = mask
+        # The sigmoid's width, fixed once: a share of the typical distance between two
+        # training conditions, so the term neither saturates nor goes flat as it trains.
+        with torch.no_grad():
+            distances = torch.cdist(self.targets, self.targets, p=1) / self.targets.shape[1]
+            off = distances[~torch.eye(len(self.names), dtype=torch.bool, device=device)]
+            self.width = max(float(off.median()) * tau, 1e-8)
+
+    def pearson(self, mu_hat: torch.Tensor, condition: str) -> torch.Tensor:
+        """1 - Pearson(mu_hat - m_ctrl, m_S - m_ctrl), over every modelled gene."""
+        delta = mu_hat - self.control
+        delta = delta - delta.mean()
+        target = self.effects[self.row[condition]]
+        cosine = (delta * target).sum() / (delta.norm() * target.norm()).clamp_min(1e-12)
+        return 1.0 - cosine
+
+    def discrim(self, mu_hat: torch.Tensor, condition: str) -> torch.Tensor:
+        """Soft rank of the true condition among the training conditions, 0 = best."""
+        keep, row = self.keep[condition], self.row[condition]
+        distance = (mu_hat[keep] - self.targets[:, keep]).abs().mean(dim=1)   # [C]
+        others = torch.cat([distance[:row], distance[row + 1:]])
+        return torch.sigmoid((distance[row] - others) / self.width).mean()
+
+
 def train(model, data, stats, train_conditions: list[str], config: dict,
           device: str, rng: np.random.Generator, log, run_dir: str | None = None) -> dict:
     """The whole of training. Returns the last epoch's loss parts."""
@@ -161,6 +211,17 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
     if mmd_weight > 0:
         log("  [warn] mmd_weight > 0: scPKFM measured its MMD estimate at NOISE LEVEL "
             "at weight 10. It has to earn this on the validation folds.")
+    pearson_weight = float(train_cfg.get("pearson_weight", 0.0))
+    discrim_weight = float(train_cfg.get("discrim_weight", 0.0))
+    metric = None
+    if pearson_weight > 0 or discrim_weight > 0:
+        if len(means) < 2 and discrim_weight > 0:
+            raise SystemExit("discrim_weight needs at least two training conditions")
+        metric = MetricTargets(data, stats, means, float(train_cfg.get("discrim_tau", 0.1)),
+                               device)
+        log(f"  metric terms: pearson {pearson_weight:g}, discrim {discrim_weight:g} "
+            f"(x mean squared effect {metric.scale:.4f}; discrim width {metric.width:.5f} "
+            f"over {len(metric.names)} training conditions)")
 
     optimiser = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]),
                                   weight_decay=float(train_cfg["weight_decay"]))
@@ -190,7 +251,7 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
         if train_cfg["max_steps_per_epoch"]:
             order = order[:int(train_cfg["max_steps_per_epoch"])]
         totals = {k: [] for k in ("loss", "fm", "endpoint", "gene", "head", "mmd",
-                                  "residual")}
+                                  "residual", "pearson", "discrim")}
 
         for index in order:
             condition = conditions[index]
@@ -269,6 +330,17 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                 loss = loss + gene_weight * gene
                 totals["gene"].append(float(gene))
 
+            if metric is not None:
+                mu_hat = predicted_mean.mean(dim=0)
+                if pearson_weight > 0:
+                    pearson = metric.pearson(mu_hat, condition)
+                    loss = loss + pearson_weight * metric.scale * pearson
+                    totals["pearson"].append(float(pearson))
+                if discrim_weight > 0:
+                    discrim = metric.discrim(mu_hat, condition)
+                    loss = loss + discrim_weight * metric.scale * discrim
+                    totals["discrim"].append(float(discrim))
+
             head_loss, head_parts = model.head.loss(params, x_target_c)
             loss = loss + head_loss
             totals["head"].append(float(head_loss))
@@ -315,7 +387,8 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
         parts = {k: float(np.mean(v)) for k, v in totals.items() if v}
         if (epoch + 1) % max(1, int(train_cfg["epochs"]) // 40) == 0 or epoch == 0:
             extra = "".join(f"  {k} {parts[k]:.5f}" for k in
-                            ("fm", "endpoint", "gene", "head", "mmd", "residual")
+                            ("fm", "endpoint", "gene", "head", "mmd", "residual",
+                             "pearson", "discrim")
                             if k in parts)
             log(f"  epoch {epoch + 1:4d}/{train_cfg['epochs']}  "
                 f"loss {parts.get('loss', float('nan')):.5f}{extra}  "

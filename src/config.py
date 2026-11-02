@@ -579,6 +579,25 @@ DEFAULTS: dict[str, Any] = {
         # validation folds rather than be assumed into the default.
         "mmd_weight": 0.0,
 
+        # --- metric-aligned terms (docs: the VCC winners trained on their metrics) ---
+        # Both act on the condition's predicted mean, like gene_endpoint_weight, and both
+        # are multiplied by the mean squared effect of the training conditions, so a
+        # weight here is on the same scale as gene_endpoint_weight. 0 = off.
+        #
+        # pearson: 1 - Pearson(mu_hat - m_ctrl, m_S - m_ctrl) over the modelled genes,
+        #          the table's Pearson-delta column. Scale-free per condition, so weak
+        #          perturbations count as much as strong ones, as they do in the column.
+        "pearson_weight": 0.0,
+        # discrim: a soft version of the DS column. For condition S, the share of the
+        #          other training conditions T whose real mean is closer (L1, the S
+        #          perturbations' own genes left out, as cell-eval does) to mu_hat than
+        #          m_S is, each comparison smoothed by a sigmoid of width
+        #          discrim_tau x the median L1 distance between training conditions.
+        #          It pushes a prediction toward its own condition and away from the
+        #          ones it could be mistaken for, which is what compression fails.
+        "discrim_weight": 0.0,
+        "discrim_tau": 0.1,
+
         # --- the residual target ---
         # ridge  r_S = m_S - m_ctrl - sum_a w_a, the residual the additive component
         #        leaves. Computable for every training combination WITHOUT reading a
