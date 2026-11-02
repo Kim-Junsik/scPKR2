@@ -8,7 +8,8 @@ The main-table rule, per run:
 - MSE, MAE, Pearson delta and DS from celleval_soft_bounded_n128/ce0542.
 - DE-Spearman from celleval_sample_bounded_n128/ce0542.
 
-Produce both folders first (scripts/metric_arms.sh does it after each run).
+Produce both folders first (scripts/metric_arms.sh does it after each run), with
+--profile full: cell-eval's default 'minimal' has no de_spearman_sig.
 
 The first arm is the reference: every other arm's row is followed by its difference from
 it, and the last column counts the columns it improves. The scorer correction for the
@@ -72,7 +73,9 @@ def main() -> None:
             row = score_run(run, args.group, args.device, args.results_tag)
             missing = [c for c, v in row.items() if not np.isfinite(v)]
             if missing:
-                print(f"  [warn] {os.path.basename(run)} has no {', '.join(missing)}")
+                hint = ("  (scored with --profile minimal? rescore it with --score-only "
+                        "--profile full)" if missing == ["DE"] else "")
+                print(f"  [warn] {os.path.basename(run)} has no {', '.join(missing)}{hint}")
             rows.append(row)
         mean = {}
         for c, _, _ in COLUMNS:

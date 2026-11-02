@@ -104,8 +104,9 @@ for arm in $ARMS; do
       "train.epochs=${EPOCHS}" \
       "${WEIGHTS[@]}"
     for gate in soft sample; do
+      # --profile full: the default 'minimal' has no de_spearman_sig, the DE column.
       python scripts/run_celleval.py "results/runs/${tag}" --gate "$gate" --bound-mean \
-        --infer-top-gene 1000 --pred-cells 128 --results-tag ce0542 \
+        --infer-top-gene 1000 --pred-cells 128 --results-tag ce0542 --profile full \
         --celleval-python "$CELLEVAL_PY" --threads "$THREADS"
     done
   done
