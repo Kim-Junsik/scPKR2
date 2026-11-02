@@ -150,6 +150,104 @@ def check_runnable(interpreter: str) -> None:
         raise SystemExit(f"{interpreter} cannot import cell_eval:\n"
                          f"{probe.stderr[-1000:]}\nBuild it with:  {SETUP_HINT}")
 
+# Put in front of SCORING_SCRIPT by run_scorer. Before its DE test, pdex 0.1.21 copies
+# the whole matrix, densified, into ONE POSIX shared-memory segment, whatever the
+# worker count. For VCC that is 170,846 x 18,080 float32 = 12.4 GB, and a container's
+# /dev/shm is often 8 GB (exit -7, SIGBUS). A norman table needs ~50 MB, which a Docker
+# default /dev/shm of 64 MB barely holds.
+#
+# With PDEX_SHM_DIR set, the segment becomes a file in that directory, mapped the same
+# way. pdex reaches it only through its module-level SharedMemory name (create=, size=,
+# name=, .name, .buf, .close(), .unlink()), so that name is the one thing replaced. The
+# matrix, the tests and the single BH correction over all perturbations are untouched.
+#
+# It runs at module level, outside the __main__ guard, on purpose. Forked workers
+# inherit the patched module, and spawned workers re-run this block when they re-import
+# the script.
+SHM_PATCH = '''
+import os as _os
+if _os.environ.get("PDEX_SHM_DIR"):
+    import mmap as _mmap
+    import uuid as _uuid
+
+    class _FileSharedMemory:
+        def __init__(self, name=None, create=False, size=0):
+            directory = _os.environ["PDEX_SHM_DIR"]
+            if create:
+                name = name or "pdex_%d_%s" % (_os.getpid(), _uuid.uuid4().hex[:8])
+                path = _os.path.join(directory, name)
+                fd = _os.open(path, _os.O_CREAT | _os.O_EXCL | _os.O_RDWR, 0o600)
+                try:
+                    _os.ftruncate(fd, size)
+                except BaseException:
+                    _os.close(fd)
+                    raise
+            else:
+                path = _os.path.join(directory, name)
+                fd = _os.open(path, _os.O_RDWR)
+                size = _os.fstat(fd).st_size
+            try:
+                self._mmap = _mmap.mmap(fd, size)
+            finally:
+                _os.close(fd)
+            self._buf = memoryview(self._mmap)
+            self._name, self._size, self._path = name, size, path
+
+        name = property(lambda self: self._name)
+        size = property(lambda self: self._size)
+        buf = property(lambda self: self._buf)
+
+        def close(self):
+            if self._buf is not None:
+                self._buf.release()
+                self._buf = None
+            if self._mmap is not None:
+                self._mmap.close()
+                self._mmap = None
+
+        def unlink(self):
+            try:
+                _os.unlink(self._path)
+            except FileNotFoundError:
+                pass
+
+    import pdex._single_cell as _pdex_single_cell
+    _pdex_single_cell.SharedMemory = _FileSharedMemory
+'''
+
+
+def run_scorer(interpreter: str, script_dir: str, argv: list[str],
+               shm_dir: str | None = None) -> subprocess.CompletedProcess:
+    """Write SHM_PATCH + SCORING_SCRIPT to script_dir/_score.py and run it.
+
+    pdex's shared matrix is kept as a file in a fresh folder under `shm_dir` (default:
+    script_dir), so a small /dev/shm cannot kill the scorer. The folder is removed
+    afterwards, also when the scorer dies: pdex only unlinks its segment on success.
+    shm_dir="dev" keeps pdex's own /dev/shm segment.
+    """
+    import shutil
+    import tempfile
+    script = os.path.normpath(os.path.abspath(os.path.join(script_dir, "_score.py")))
+    with open(script, "w", encoding="utf-8") as handle:
+        handle.write(SHM_PATCH + SCORING_SCRIPT)
+    # The child is told to emit utf-8, so the parent must DECODE utf-8. Left to the
+    # locale it decodes as cp949 on a Korean Windows and every non-ascii byte comes
+    # back mangled.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    folder = None
+    if shm_dir != "dev":
+        base = os.path.abspath(shm_dir or script_dir)
+        os.makedirs(base, exist_ok=True)
+        folder = tempfile.mkdtemp(prefix="pdex_shm_", dir=base)
+        env["PDEX_SHM_DIR"] = folder
+    try:
+        return subprocess.run([interpreter, script, *argv], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", env=env)
+    finally:
+        if folder:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
 # Kept as a string and run by the other interpreter; importing cell_eval here
 # would fail, which is the whole reason for the split.
 #
@@ -312,6 +410,10 @@ def main() -> None:
                              "table reports - on combosciplex the two differ by 0.157 "
                              "of L2. It goes in the folder name for the same reason the "
                              "gate does.")
+    parser.add_argument("--shm-dir", default=None,
+                        help="where pdex's shared matrix is kept as a file while "
+                             "scoring (default: the results folder); 'dev' keeps "
+                             "pdex's own /dev/shm segment")
     args = parser.parse_args()
 
     calibration = None
@@ -425,21 +527,13 @@ def main() -> None:
         if args.export_only:
             return
 
-    script_path = os.path.normpath(os.path.abspath(os.path.join(out_dir, "_score.py")))
-    with open(script_path, "w", encoding="utf-8") as handle:
-        handle.write(SCORING_SCRIPT)
-
     print(f"\nscoring with cell-eval (profile={args.profile}) ...")
-    completed = subprocess.run(
-        [interpreter, script_path,
-         os.path.abspath(paths["pred"]), os.path.abspath(paths["real"]),
+    completed = run_scorer(
+        interpreter, out_dir,
+        [os.path.abspath(paths["pred"]), os.path.abspath(paths["real"]),
          os.path.abspath(out_dir), args.profile, CONTROL_LABEL, PERT_COL,
          str(args.threads)],
-        # The child is told to emit utf-8, so the parent must DECODE utf-8. Left
-        # to the locale it decodes as cp949 on a Korean Windows and every non-ascii
-        # byte comes back mangled.
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        args.shm_dir)
     print(completed.stdout)
     if completed.returncode != 0:
         print(completed.stderr[-4000:], file=sys.stderr)

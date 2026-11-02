@@ -57,10 +57,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 
 import numpy as np
@@ -70,7 +68,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # run_celleval keeps its module level light on purpose, so this import costs nothing.
-from run_celleval import SCORING_SCRIPT, check_runnable, find_celleval_python
+from run_celleval import check_runnable, find_celleval_python, run_scorer
 
 PERT_COL = "target_gene"
 CONTROL = "non-targeting"
@@ -82,70 +80,6 @@ LEADERBOARD_BASE = {"DES": 0.097, "PDS": 0.509}
 METRICS = {"DES": ("overlap_at_N", "one"),
            "PDS": ("discrimination_score_l1", "one"),
            "MAE": ("mae", "zero")}
-
-# Put in front of SCORING_SCRIPT. Before its DE test, pdex 0.1.21 copies the whole matrix,
-# densified, into ONE POSIX shared-memory segment, whatever the worker count. For VCC
-# that is 170,846 x 18,080 float32 = 12.4 GB, and a container's /dev/shm is often 8 GB
-# (exit -7, SIGBUS). The norman-sized tables never came near that.
-#
-# With PDEX_SHM_DIR set, the segment becomes a file in that directory, mapped the same
-# way. pdex reaches it only through its module-level SharedMemory name (create=, size=,
-# name=, .name, .buf, .close(), .unlink()), so that name is the one thing replaced. The
-# matrix, the tests and the single BH correction over all perturbations are untouched.
-#
-# It runs at module level, outside the __main__ guard, on purpose. Forked workers
-# inherit the patched module, and spawned workers re-run this block when they re-import
-# the script.
-SHM_PATCH = '''
-import os as _os
-if _os.environ.get("PDEX_SHM_DIR"):
-    import mmap as _mmap
-    import uuid as _uuid
-
-    class _FileSharedMemory:
-        def __init__(self, name=None, create=False, size=0):
-            directory = _os.environ["PDEX_SHM_DIR"]
-            if create:
-                name = name or "pdex_%d_%s" % (_os.getpid(), _uuid.uuid4().hex[:8])
-                path = _os.path.join(directory, name)
-                fd = _os.open(path, _os.O_CREAT | _os.O_EXCL | _os.O_RDWR, 0o600)
-                try:
-                    _os.ftruncate(fd, size)
-                except BaseException:
-                    _os.close(fd)
-                    raise
-            else:
-                path = _os.path.join(directory, name)
-                fd = _os.open(path, _os.O_RDWR)
-                size = _os.fstat(fd).st_size
-            try:
-                self._mmap = _mmap.mmap(fd, size)
-            finally:
-                _os.close(fd)
-            self._buf = memoryview(self._mmap)
-            self._name, self._size, self._path = name, size, path
-
-        name = property(lambda self: self._name)
-        size = property(lambda self: self._size)
-        buf = property(lambda self: self._buf)
-
-        def close(self):
-            if self._buf is not None:
-                self._buf.release()
-                self._buf = None
-            if self._mmap is not None:
-                self._mmap.close()
-                self._mmap = None
-
-        def unlink(self):
-            try:
-                _os.unlink(self._path)
-            except FileNotFoundError:
-                pass
-
-    import pdex._single_cell as _pdex_single_cell
-    _pdex_single_cell.SharedMemory = _FileSharedMemory
-'''
 
 
 def require(root: str, relative: str) -> str:
@@ -330,30 +264,10 @@ def score(args) -> None:
         raise SystemExit(f"missing {real}")
     out_dir = os.path.abspath(os.path.join(args.export_dir, args.results_tag))
     os.makedirs(out_dir, exist_ok=True)
-    script = os.path.join(out_dir, "_score.py")
-    with open(script, "w", encoding="utf-8") as handle:
-        handle.write(SHM_PATCH + SCORING_SCRIPT)
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    # A fresh folder of our own, so the cleanup below can never remove anything else.
-    # pdex unlinks its segment only on success, so a failed run would otherwise leave
-    # a 12.4 GB file behind.
-    shm_dir = None
-    if args.shm_dir != "dev":
-        base = os.path.abspath(args.shm_dir or out_dir)
-        os.makedirs(base, exist_ok=True)
-        shm_dir = tempfile.mkdtemp(prefix="pdex_shm_", dir=base)
-        env["PDEX_SHM_DIR"] = shm_dir
-        print(f"pdex's shared matrix goes to a file in {shm_dir} (needs ~12.4 GB of disk)")
     print(f"scoring {pred} against {real} (profile vcc) ...", flush=True)
-    try:
-        completed = subprocess.run(
-            [interpreter, script, pred, real, out_dir, "vcc", CONTROL, PERT_COL,
-             str(args.threads)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            env=env)
-    finally:
-        if shm_dir:
-            shutil.rmtree(shm_dir, ignore_errors=True)
+    completed = run_scorer(interpreter, out_dir,
+                           [pred, real, out_dir, "vcc", CONTROL, PERT_COL,
+                            str(args.threads)], args.shm_dir)
     print(completed.stdout)
     if completed.returncode != 0:
         print(completed.stderr[-4000:], file=sys.stderr)
