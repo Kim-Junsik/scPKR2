@@ -12,7 +12,8 @@ Produce both folders first (scripts/metric_arms.sh does it after each run), with
 --profile full: cell-eval's default 'minimal' has no de_spearman_sig.
 
 The first arm is the reference: every other arm's row is followed by its difference from
-it, and the last column counts the columns it improves. The scorer correction for the
+it, and the last column counts the columns it improves. --per-run adds each run's row
+under its arm; the seeds pair across arms. The scorer correction for the
 published rows (MSE x1.042, DS +0.0126) is left out: it cancels in a difference.
 """
 
@@ -55,6 +56,8 @@ def main() -> None:
     parser.add_argument("--group", default="double", choices=["double", "single", "all"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--results-tag", default="ce0542")
+    parser.add_argument("--per-run", action="store_true",
+                        help="also print each run's row under its arm (seeds pair across arms)")
     args = parser.parse_args()
 
     arms = []
@@ -81,26 +84,31 @@ def main() -> None:
         for c, _, _ in COLUMNS:
             finite = [r[c] for r in rows if np.isfinite(r[c])]
             mean[c] = float(np.mean(finite)) if finite else float("nan")
-        means[name] = (mean, len(runs))
+        means[name] = (mean, len(runs), list(zip(runs, rows)))
+
+    def cells(values: dict, signed: bool = False) -> str:
+        sign = "+" if signed else ""
+        return " ".join(format(values[c], f"{sign}9.5f" if c in ("MSE", "MAE") else f"{sign}9.4f")
+                        for c, _, _ in COLUMNS)
 
     header = f"{'arm':8s} {'runs':>4s} " + " ".join(f"{c:>9s}" for c, _, _ in COLUMNS)
     print(header + "   better")
     print("-" * (len(header) + 9))
     reference = means[arms[0][0]][0]
     for name, _ in arms:
-        values, count = means[name]
-        print(f"{name:8s} {count:4d} " + " ".join(
-            f"{values[c]:9.5f}" if c in ("MSE", "MAE") else f"{values[c]:9.4f}"
-            for c, _, _ in COLUMNS))
-        if name == arms[0][0]:
-            continue
-        better = sum(1 for c, _, high in COLUMNS
-                     if np.isfinite(values[c]) and np.isfinite(reference[c])
-                     and values[c] != reference[c] and (values[c] > reference[c]) == high)
-        print(f"{'  diff':8s} {'':4s} " + " ".join(
-            f"{values[c] - reference[c]:+9.5f}" if c in ("MSE", "MAE")
-            else f"{values[c] - reference[c]:+9.4f}" for c, _, _ in COLUMNS)
-            + f"   {better}/6")
+        values, count, per_run = means[name]
+        print(f"{name:8s} {count:4d} " + cells(values))
+        if name != arms[0][0]:
+            better = sum(1 for c, _, high in COLUMNS
+                         if np.isfinite(values[c]) and np.isfinite(reference[c])
+                         and values[c] != reference[c] and (values[c] > reference[c]) == high)
+            difference = {c: values[c] - reference[c] for c, _, _ in COLUMNS}
+            print(f"{'  diff':8s} {'':4s} " + cells(difference, signed=True) + f"   {better}/6")
+        if args.per_run:
+            for run, row in per_run:
+                # The part after the arm's prefix: s0, or f3_s0.
+                label = "_".join(os.path.basename(run).split("_")[1:]) or os.path.basename(run)
+                print(f"    {label:9s} " + cells(row))
     print("\nlower is better: L2, MSE, MAE.  higher is better: DE, PD (Pearson delta), DS.")
 
 

@@ -4,6 +4,10 @@
 #   bash scripts/metric_arms.sh                      Norman additive fold 3, arms P D PD, seeds 0-2
 #   DATA=combo bash scripts/metric_arms.sh           ComboSciPlex (Table 3 split), the same arms
 #   ARMS="P" SEEDS="0" bash scripts/metric_arms.sh   part of it, one pane each
+#   DATA=combo ARMS="PD" PW=30 bash scripts/metric_arms.sh   another weight: tag cDfmPDp30_s*
+#
+# PW and DW are the pearson and discrim weights (default 10). A weight other than 10 is
+# written into the tag (p30, d30), so the weight-10 runs keep their names.
 #
 # THE IDEA comes from the VCC 2025 winners, who trained on their metrics directly. The
 # final model (nEp0fm / cDfm) trains its mean on L2 alone, and the columns it loses are
@@ -35,6 +39,8 @@ SEEDS="${SEEDS:-0 1 2}"
 FOLD="${FOLD:-3}"
 CELLEVAL_PY="${CELLEVAL_PY:-.env-ce-scdfm/bin/python}"
 THREADS="${THREADS:-16}"
+PW="${PW:-10}"
+DW="${DW:-10}"
 
 if [ ! -x "$CELLEVAL_PY" ]; then
   echo "no scoring interpreter at $CELLEVAL_PY (python -m venv .env-ce-scdfm && .env-ce-scdfm/bin/pip install -r requirements-celleval-scdfm.txt)" >&2
@@ -81,13 +87,16 @@ fi
 
 for arm in $ARMS; do
   case "$arm" in
-    P)  WEIGHTS=(train.pearson_weight=10 train.discrim_weight=0) ;;
-    D)  WEIGHTS=(train.pearson_weight=0 train.discrim_weight=10) ;;
-    PD) WEIGHTS=(train.pearson_weight=10 train.discrim_weight=10) ;;
+    P)  WEIGHTS=("train.pearson_weight=${PW}" train.discrim_weight=0) ;;
+    D)  WEIGHTS=(train.pearson_weight=0 "train.discrim_weight=${DW}") ;;
+    PD) WEIGHTS=("train.pearson_weight=${PW}" "train.discrim_weight=${DW}") ;;
     *) echo "unknown arm '$arm' (P D PD)" >&2; exit 2 ;;
   esac
+  suffix=""
+  case "$arm" in *P*) [ "$PW" = 10 ] || suffix="${suffix}p${PW}" ;; esac
+  case "$arm" in *D*) [ "$DW" = 10 ] || suffix="${suffix}d${DW}" ;; esac
   for seed in $SEEDS; do
-    if [ "$DATA" = norman ]; then tag="nEp0fm${arm}_f${FOLD}_s${seed}"; else tag="cDfm${arm}_s${seed}"; fi
+    if [ "$DATA" = norman ]; then tag="nEp0fm${arm}${suffix}_f${FOLD}_s${seed}"; else tag="cDfm${arm}${suffix}_s${seed}"; fi
     echo ""
     echo "=== ${tag}  ->  results/runs/${tag}   [${DATA}, ${WEIGHTS[*]}] ==="
     python scripts/train.py --tag "$tag" --force --set \
