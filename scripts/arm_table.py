@@ -80,10 +80,9 @@ def main() -> None:
                         "--profile full)" if missing == ["DE"] else "")
                 print(f"  [warn] {os.path.basename(run)} has no {', '.join(missing)}{hint}")
             rows.append(row)
-        mean = {}
-        for c, _, _ in COLUMNS:
-            finite = [r[c] for r in rows if np.isfinite(r[c])]
-            mean[c] = float(np.mean(finite)) if finite else float("nan")
+        # A column missing from any run is nan for the arm: a mean over fewer runs than
+        # the arm's count would read as all of them.
+        mean = {c: float(np.mean([r[c] for r in rows])) for c, _, _ in COLUMNS}
         means[name] = (mean, len(runs), list(zip(runs, rows)))
 
     def cells(values: dict, signed: bool = False) -> str:
