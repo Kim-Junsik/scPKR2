@@ -1,6 +1,8 @@
 """What is known about a perturbation, as a fixed vector k_a - docs/DESIGN_ENCODER.md 2.
 
     k_a  STRING spectral embedding of the target gene     model.perturbation_knowledge=string
+         ESM-2 embedding of the target gene's protein      model.perturbation_knowledge=esm
+         the two side by side                              model.perturbation_knowledge=string_esm
          one-hot of the drug's annotated mechanism         model.perturbation_knowledge=moa
          a single zero (the encoder with nothing to say)   model.perturbation_knowledge=zero
 
@@ -29,7 +31,7 @@ import pandas as pd
 import scipy.sparse as sp
 from scipy.sparse.linalg import eigsh
 
-KINDS = ("none", "zero", "string", "moa")
+KINDS = ("none", "zero", "string", "moa", "esm", "string_esm")
 
 
 def string_embedding(string_dir: str, min_score: int, dim: int
@@ -83,6 +85,48 @@ def string_embedding(string_dir: str, min_score: int, dim: int
             names.append(name)
             keep.append(i)
     return names, vectors[keep].astype(np.float32)
+
+
+def esm_embedding(table: str, dim: int) -> tuple[list[str], np.ndarray]:
+    """(gene symbols, [n, dim]) - the top principal components of the ESM-2 table.
+
+    The table is scripts/build_esm_knowledge.py's output: one mean-pooled ESM-2 vector
+    per gene's protein, 1,280 numbers each. Reduced here the way the STRING embedding is
+    built: principal components over the table's own genes (a fixed list, the same for
+    every split, fold and seed), each component's sign fixed by its largest entry, and
+    each column standardised. Nothing here sees expression data.
+
+    THE SCALE. After standardising, the block is divided by sqrt(dim), so a gene's
+    vector has a root-mean-square norm of 1. The STRING block's median norm over the
+    Norman genes it covers is 1.06. Left at sqrt(64) = 8, the ESM half would move the
+    encoder eight times faster than STRING under Adam and would decide string_esm alone.
+    """
+    if not os.path.exists(table):
+        raise FileNotFoundError(
+            f"{table} is missing (data.esm_table). Build it with "
+            f"scripts/build_esm_knowledge.py, or git pull the committed one")
+    saved = np.load(table, allow_pickle=False)
+    genes = [str(g) for g in saved["genes"]]
+    centred = saved["vectors"].astype(np.float64)
+    centred = centred - centred.mean(axis=0)
+    left, values, _ = np.linalg.svd(centred, full_matrices=False)
+    # Centring costs one dimension: n genes give at most n - 1 components.
+    dim = min(int(dim), len(genes) - 1)
+    scores = left[:, :dim] * values[:dim]
+    signs = np.sign(scores[np.abs(scores).argmax(axis=0), np.arange(dim)])
+    scores = scores * np.where(signs == 0, 1.0, signs)
+    scores = scores / np.maximum(scores.std(axis=0), 1e-12) / np.sqrt(dim)
+    return genes, scores.astype(np.float32)
+
+
+def _rows(names: list[str], vectors: np.ndarray, perturbations: list[str]) -> np.ndarray:
+    """vectors re-ordered to `perturbations`, zero for a perturbation the source lacks."""
+    row = {name: i for i, name in enumerate(names)}
+    matrix = np.zeros((len(perturbations), vectors.shape[1]), dtype=np.float32)
+    for i, gene in enumerate(perturbations):
+        if gene in row:
+            matrix[i] = vectors[row[gene]]
+    return matrix
 
 
 def drug_mechanisms(raw_h5ad: str) -> dict[str, str]:
@@ -154,15 +198,20 @@ def knowledge_matrix(config: dict, perturbations: list[str]
         return None, {"kind": "none"}
     if kind == "zero":
         matrix = np.zeros((len(perturbations), 1), dtype=np.float32)
-    elif kind == "string":
-        names, vectors = string_embedding(config["data"]["string_dir"],
-                                          int(cfg.get("knowledge_min_score", 700)),
-                                          int(cfg.get("knowledge_dim", 64)))
-        row = {name: i for i, name in enumerate(names)}
-        matrix = np.zeros((len(perturbations), vectors.shape[1]), dtype=np.float32)
-        for i, gene in enumerate(perturbations):
-            if gene in row:
-                matrix[i] = vectors[row[gene]]
+    elif kind in ("string", "esm", "string_esm"):
+        # string_esm puts the two blocks side by side; a gene one source lacks has zeros
+        # in that block only.
+        blocks = []
+        if kind in ("string", "string_esm"):
+            blocks.append(_rows(*string_embedding(config["data"]["string_dir"],
+                                                  int(cfg.get("knowledge_min_score", 700)),
+                                                  int(cfg.get("knowledge_dim", 64))),
+                                perturbations))
+        if kind in ("esm", "string_esm"):
+            blocks.append(_rows(*esm_embedding(config["data"]["esm_table"],
+                                               int(cfg.get("knowledge_esm_dim", 64))),
+                                perturbations))
+        matrix = np.concatenate(blocks, axis=1)
     else:
         mechanism = read_mechanisms(config)
         classes = sorted(set(mechanism.values()))

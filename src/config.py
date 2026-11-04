@@ -21,6 +21,8 @@ DEFAULTS: dict[str, Any] = {
         "string_dir": "data/networks",
         # drug -> mechanism for ComboSciPlex, committed so the raw file is not needed.
         "moa_table": "assets/knowledge/combosciplex_moa.csv",
+        # one ESM-2 vector per perturbed gene's protein, scripts/build_esm_knowledge.py.
+        "esm_table": "assets/knowledge/norman_esm2_650m.npz",
         "pathway_min_genes": 10,
         "pathway_max_genes": 300,
         "drop_disease_pathways": True,
@@ -267,6 +269,7 @@ DEFAULTS: dict[str, Any] = {
         # known about it, c_a = c_bar + E k_a + delta_a (src/data/knowledge.py).
         #   none    the lookup table, as before    zero    the encoder with k_a = 0
         #   string  STRING spectral embedding      moa     drug mechanism one-hot
+        #   esm     ESM-2 protein embedding        string_esm   the two side by side
         # docs/DESIGN_HYBRID.md: learned coordinates concatenated to the fixed ones,
         # p = [Phi(x); z(x); 1]. 0 = none (every model before). Generators only.
         "latent_dim": 0,
@@ -276,6 +279,7 @@ DEFAULTS: dict[str, Any] = {
         "knowledge_seed": None,            #   covered perturbations; None = train.seed
         "knowledge_dim": 64,               # string: eigenvectors kept
         "knowledge_min_score": 700,        # string: combined_score threshold
+        "knowledge_esm_dim": 64,           # esm: principal components kept
         "perturbation_dropout": 0.5,       # chosen on the validation split (H0)
         "generator_residual": False,
         "generator_residual_penalty": 0.0,  # lambda, chosen on the validation split (H0)

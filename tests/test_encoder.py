@@ -186,3 +186,69 @@ def test_the_committed_mechanism_table_is_the_raw_annotation():
     assert len(from_table) == 17
     if os.path.exists(raw):
         assert from_table == drug_mechanisms(raw)
+
+
+def fake_esm_table(path, genes, width=12, seed=0):
+    vectors = np.random.default_rng(seed).normal(size=(len(genes), width)).astype(np.float32)
+    np.savez_compressed(path, genes=np.array(genes), vectors=vectors)
+    return vectors
+
+
+def test_the_esm_embedding_is_standardised_and_deterministic(tmp_path):
+    from src.data.knowledge import esm_embedding
+
+    table = str(tmp_path / "esm.npz")
+    fake_esm_table(table, [f"G{i}" for i in range(9)])
+    names, vectors = esm_embedding(table, dim=4)
+    assert names == [f"G{i}" for i in range(9)]
+    assert vectors.shape == (9, 4)
+    assert np.allclose(vectors.mean(axis=0), 0.0, atol=1e-5)
+    # Columns standardised, then the block scaled so the mean squared row norm is 1.
+    assert np.allclose(vectors.std(axis=0), 0.5, atol=1e-5)
+    assert np.isclose(float((vectors ** 2).sum(axis=1).mean()), 1.0, atol=1e-5)
+    assert np.array_equal(esm_embedding(table, dim=4)[1], vectors)
+    # Centring leaves n - 1 components, so asking for more gives n - 1.
+    assert esm_embedding(table, dim=64)[1].shape == (9, 8)
+
+
+def test_string_esm_puts_the_blocks_side_by_side(tmp_path, monkeypatch):
+    """Each block is its own source's rows; a gene one source lacks is zero there only."""
+    from src.data import knowledge as module
+
+    table = str(tmp_path / "esm.npz")
+    fake_esm_table(table, ["A", "B", "C", "D", "E", "F"])
+    string = (["A", "C", "Z"], np.arange(9, dtype=np.float32).reshape(3, 3) + 1.0)
+    monkeypatch.setattr(module, "string_embedding", lambda *a: string)
+
+    def matrix(kind):
+        config = config_module.load([f"model.perturbation_knowledge={kind}",
+                                     f"data.esm_table={table}",
+                                     "model.knowledge_esm_dim=2"])
+        return module.knowledge_matrix(config, ["A", "B", "Q"])
+
+    joint, summary = matrix("string_esm")
+    alone_string, _ = matrix("string")
+    alone_esm, _ = matrix("esm")
+    assert joint.shape == (3, 5) and summary["dim"] == 5
+    assert np.array_equal(joint[:, :3], alone_string)
+    assert np.array_equal(joint[:, 3:], alone_esm)
+    assert np.array_equal(joint[1, :3], np.zeros(3))           # B: no STRING row
+    assert np.abs(joint[1, 3:]).sum() > 0                      # ... but an ESM one
+    assert np.array_equal(joint[2], np.zeros(5))               # Q: in neither
+    assert summary["covered"] == 2
+
+
+def test_the_committed_esm_table_covers_every_norman_gene():
+    config = config_module.load([])
+    table = config["data"]["esm_table"]
+    fasta = "assets/knowledge/norman_uniprot.fasta"
+    if not os.path.exists(table):
+        pytest.skip("no committed ESM table")
+    saved = np.load(table, allow_pickle=False)
+    assert saved["vectors"].shape == (101, 1280)
+    assert np.isfinite(saved["vectors"]).all()
+    if os.path.exists(fasta):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "scripts"))
+        from build_esm_knowledge import read_fasta
+        assert sorted(read_fasta(fasta)) == [str(g) for g in saved["genes"]]

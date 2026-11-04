@@ -2,6 +2,11 @@
 
     python scripts/arm_table.py --group double --device cuda base='results/runs/nEp0fm_f3_s*' P='results/runs/nEp0fmP_f3_s*' D='results/runs/nEp0fmD_f3_s*' PD='results/runs/nEp0fmPD_f3_s*'
     python scripts/arm_table.py --group all --device cuda base='results/runs/cDfm_s[012]' P='results/runs/cDfmP_s*' D='results/runs/cDfmD_s*' PD='results/runs/cDfmPD_s*'
+    python scripts/arm_table.py --group single --group-export --device cuda base='results/runs/nEp0fm_comb_f3_s*' SE='results/runs/nEp0fmSE_comb_f3_s*'
+
+--group-export reads the block's own export (run_celleval.py --group), which Table 2 needs:
+DE-Spearman and DS are computed over every perturbation in the scored file, so the singles
+and doubles of a combinations fold are exported and scored apart.
 
 The main-table rule, per run:
 - L2 over the 1,000 scanpy-HVG genes, from N_p soft cells (scDFM eq. 15, --n-cells 0).
@@ -37,9 +42,11 @@ COLUMNS = [("L2", None, False), ("MSE", "mse", False), ("MAE", "mae", False),
            ("DS", "discrimination_score_l1", True)]
 
 
-def score_run(run_dir: str, group: str, device: str, tag: str) -> dict[str, float]:
-    soft = os.path.join(celleval_dir("soft", None, True, 128), tag)
-    sample = os.path.join(celleval_dir("sample", None, True, 128), tag)
+def score_run(run_dir: str, group: str, device: str, tag: str,
+              group_export: bool = False) -> dict[str, float]:
+    block = group if group_export else None
+    soft = os.path.join(celleval_dir("soft", None, True, 128, None, block), tag)
+    sample = os.path.join(celleval_dir("sample", None, True, 128, None, block), tag)
     soft_values = celleval_means(run_dir, "soft", group, None, True, soft) or {}
     sample_values = celleval_means(run_dir, "sample", group, None, True, sample) or {}
     row = {"L2": compute_l2(run_dir, device, 0, "soft", 1000, group, None, "beta", True)}
@@ -56,6 +63,8 @@ def main() -> None:
     parser.add_argument("--group", default="double", choices=["double", "single", "all"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--results-tag", default="ce0542")
+    parser.add_argument("--group-export", action="store_true",
+                        help="read the per-block export (run_celleval.py --group); Table 2")
     parser.add_argument("--per-run", action="store_true",
                         help="also print each run's row under its arm (seeds pair across arms)")
     args = parser.parse_args()
@@ -73,7 +82,8 @@ def main() -> None:
     for name, runs in arms:
         rows = []
         for run in runs:
-            row = score_run(run, args.group, args.device, args.results_tag)
+            row = score_run(run, args.group, args.device, args.results_tag,
+                            args.group_export)
             missing = [c for c, v in row.items() if not np.isfinite(v)]
             if missing:
                 hint = ("  (scored with --profile minimal? rescore it with --score-only "
