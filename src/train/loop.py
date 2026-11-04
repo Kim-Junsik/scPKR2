@@ -95,6 +95,21 @@ def trainable_conditions(data, stats, train_conditions: list[str],
     return out
 
 
+def train_conditions_used(data, stats, train_conditions: list[str]) -> list[str]:
+    """The conditions train() steps through, in the order it holds them."""
+    return [c for c in train_conditions
+            if stats.has(c) and c != data.control_condition]
+
+
+def appearance_counts(data, conditions: list[str]) -> dict[int, int]:
+    """perturbation index -> how many of `conditions` it appears in. The shrinkage's n_a."""
+    counts: dict[int, int] = {}
+    for condition in conditions:
+        for pert in {data.pert_index[g] for g in data.naming.genes(condition)}:
+            counts[pert] = counts.get(pert, 0) + 1
+    return counts
+
+
 @torch.no_grad()
 def condition_means(data, stats, conditions: list[str], device: str) -> dict:
     """m_S per condition, on the device. Constants: cached once, never refitted."""
@@ -186,8 +201,7 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
     # the ridge could not cover, because its prediction would then be missing a term it
     # could not supply. Here a perturbation's embedding is learned from whatever
     # conditions contain it, so there is nothing to be uncovered BY.
-    conditions = [c for c in train_conditions
-                  if stats.has(c) and c != data.control_condition]
+    conditions = train_conditions_used(data, stats, train_conditions)
     if not conditions:
         raise SystemExit("no trainable condition in this fold")
     skipped = sum(1 for c in train_conditions
@@ -223,6 +237,18 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
             f"(x mean squared effect {metric.scale:.4f}; discrim width {metric.width:.5f} "
             f"over {len(metric.names)} training conditions)")
 
+    shrink_weight = float(train_cfg.get("shrink_weight", 0.0))
+    shrink_counts = shrink_members = None
+    if shrink_weight > 0:
+        if not model.has_generators:
+            raise SystemExit("train.shrink_weight needs model.response=generator: it "
+                             "shrinks the generators")
+        shrink_counts = appearance_counts(data, conditions)
+        shrink_members = sorted(shrink_counts)
+        once = sum(1 for n in shrink_counts.values() if n == 1)
+        log(f"  shrink: weight {shrink_weight:g} over {len(shrink_members)} perturbations "
+            f"({once} in one training condition only)")
+
     optimiser = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]),
                                   weight_decay=float(train_cfg["weight_decay"]))
     # The average of the weights along the trajectory, not of their gradients. None
@@ -251,7 +277,10 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
         if train_cfg["max_steps_per_epoch"]:
             order = order[:int(train_cfg["max_steps_per_epoch"])]
         totals = {k: [] for k in ("loss", "fm", "endpoint", "gene", "head", "mmd",
-                                  "residual", "pearson", "discrim")}
+                                  "residual", "pearson", "discrim", "shrink")}
+        # Once per epoch: the average moves slowly, and it is held fixed (detached) anyway.
+        centre = (model.modulation.mean_generator(shrink_members)
+                  if shrink_weight > 0 else None)
 
         for index in order:
             condition = conditions[index]
@@ -350,6 +379,12 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                 loss = loss + residual_weight * penalty
                 totals["residual"].append(float(penalty))
 
+            if shrink_weight > 0:
+                shrink = model.modulation.shrink_penalty(perturbations, centre,
+                                                         shrink_counts)
+                loss = loss + shrink_weight * shrink
+                totals["shrink"].append(float(shrink))
+
             if mmd_weight > 0:
                 realised = model.head.point_estimate(params)
                 sigmas = median_sigmas(x_target_c, scales=(0.5, 1.0, 2.0, 4.0))
@@ -388,7 +423,7 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
         if (epoch + 1) % max(1, int(train_cfg["epochs"]) // 40) == 0 or epoch == 0:
             extra = "".join(f"  {k} {parts[k]:.5f}" for k in
                             ("fm", "endpoint", "gene", "head", "mmd", "residual",
-                             "pearson", "discrim")
+                             "pearson", "discrim", "shrink")
                             if k in parts)
             log(f"  epoch {epoch + 1:4d}/{train_cfg['epochs']}  "
                 f"loss {parts.get('loss', float('nan')):.5f}{extra}  "

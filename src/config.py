@@ -601,6 +601,16 @@ DEFAULTS: dict[str, Any] = {
         #          ones it could be mistaken for, which is what compression fails.
         "discrim_weight": 0.0,
         "discrim_tau": 0.1,
+        # shrink: sum_a ||A_a - A_bar||_F^2 over the training perturbations, each charged
+        #         once per epoch (models/generator.py, shrink_penalty). A ridge prior on
+        #         how far a perturbation's generator sits from the average one. Where the
+        #         data pin a generator down it barely moves; where they do not, the prior
+        #         decides. The case it is for: a drug that appears in one training
+        #         combination only (Pirarubicin, in Alvespimycin+Pirarubicin) can
+        #         otherwise take up that whole combination's response and leave its
+        #         partner nothing. In operator units, NOT on gene_endpoint_weight's scale:
+        #         scripts/shrink_weight.py sets it from a trained reference run.
+        "shrink_weight": 0.0,
 
         # --- the residual target ---
         # ridge  r_S = m_S - m_ctrl - sum_a w_a, the residual the additive component

@@ -181,10 +181,46 @@ class GeneratorResponse(nn.Module):
             elif (self.training and self.dropout > 0
                   and float(torch.rand(())) < self.dropout):
                 private = False
+        return self._masked(pert, private)
+
+    def _masked(self, pert: int, private: bool = True) -> torch.Tensor:
+        """A_a with the masks applied and no dropout: what generator() returns in eval."""
         out = self.operators.matrix(pert, private=private) * self.graph_mask
         if self.residual is not None:
             out = out + self.residual.matrix(pert)
         return out * self.row_mask
+
+    @torch.no_grad()
+    def mean_generator(self, members: list[int]) -> torch.Tensor:
+        """A_bar, [D, D]: the average generator over `members`, the training perturbations.
+
+        Detached. It is the point the shrinkage pulls toward, not something the
+        shrinkage moves: with gradient through A_bar a step that penalises only one
+        condition's perturbations would also drag the average toward them.
+        """
+        total = torch.zeros(self.dim, self.dim, device=self.row_mask.device,
+                            dtype=self.row_mask.dtype)
+        for pert in members:
+            total += self._masked(pert)
+        return total / max(len(members), 1)
+
+    def shrink_penalty(self, perturbations: list[int], centre: torch.Tensor,
+                       counts: dict[int, int]) -> torch.Tensor:
+        """sum_a ||A_a - A_bar||_F^2 / n_a over one condition's perturbations.
+
+        n_a is the number of training conditions perturbation a appears in. A step
+        visits one condition, so over an epoch each perturbation is charged ONCE,
+        whether it appears in one condition or ten. Charged per appearance instead, a
+        drug in two conditions would cost twice as much to move as a drug in one, and the
+        drug seen once would be the one that takes up a shared combination.
+
+        On the whole generator, not on c_a: U diag(c) V is unchanged by U -> kU,
+        c -> c/k, so a penalty on c alone could be paid off by growing U.
+        """
+        if not perturbations:
+            return torch.zeros((), device=self.row_mask.device, dtype=self.row_mask.dtype)
+        return sum((self._masked(pert) - centre).square().sum() / counts[pert]
+                   for pert in sorted(set(perturbations)))
 
     def offgraph_share(self, perturbations: list[int]) -> float:
         """sum_a ||(1 - G) * A_a||^2 / sum_a ||A_a||^2 on the K x K block.
