@@ -1230,3 +1230,86 @@ L2는 soft, 4,096 cells. 15개 실행의 평균(paper_table.py는 MSE, MAE를 �
   효과가 약한 유전자 쪽으로 새는 것으로 보인다(해석). 짝의 단일이 학습에 있는 경우(FOXF1, 3개 모두)에도 일어난다.
 - **DE-Spearman과 같은 결함일 가능성이 크다.** 약한 교란을 강하게 예측하면 그 교란의 예측 DE 유전자 수가 늘어 순위가 무너진다.
   `scripts/de_rank.py`로 확인한다.
+
+---
+
+## 35. 최종 결과 — 세 표의 최종 모델과 수치 (2026-11-06 확정)
+
+33·34절의 nEfm 수치는 이 절로 대체한다. 모델(perturbation dropout 0, Table 3은 Pearson 손실)과 L2 측정 규칙(N_p 세포)이
+바뀌었다. 이 상태의 코드에는 태그 `best-2026-11-06`을 달았다.
+
+**최종 모델**
+
+| 표 | 모델 | 설정 | 학습 | 런 |
+|---|---|---|---|---|
+| T1 | nEp0fm | nEfm + `model.perturbation_dropout=0`, STRING 지식 | `TABLE=1 bash scripts/final_p0.sh` | `nEp0fm_f{0-4}_s{0-2}` 15개 |
+| T2 | nEp0fm | 같음, `split.method=combinations` | `TABLE=2 bash scripts/final_p0.sh` | `nEp0fm_comb_f{0-4}_s{0-2}` 15개 |
+| T3 | cDfmP | `best_fm_table3.sh`(ARM=D, 지식 없음, dropout 0.25) + `train.pearson_weight=10` | `DATA=combo ARMS=P SEEDS="0 1 2 3 4 5 6 7 8 9" bash scripts/metric_arms.sh` | `cDfmP_s{0-9}` 10개 |
+
+**측정 규칙** (`scripts/arm_table.py`가 런에서 그대로 재현한다)
+- L2: soft 게이트, 세포 평균 한계(`--bound-mean`), 조건마다 실제 세포 수(N_p)만큼 예측(scDFM 식 15, `--n-cells 0`).
+  test 부분집합의 scanpy HVG 1,000 유전자.
+- MSE, MAE, Pearson Δ, DS: 같은 게이트, 섭동당 예측 세포 128개, cell-eval 0.5.42 + pdex 0.1.21(`--results-tag ce0542`).
+- DE-Spearman: `de_spearman_sig`, **sample 게이트**. soft 게이트는 0을 내지 않아서, 86~93 %가 0인 대조군과 비교하면
+  거의 모든 유전자가 유의로 잡혀 이 지표가 포화된다.
+- Table 2는 Single과 Double을 따로 내보내고 따로 채점한다(`--group`, 15절).
+- 우리 행에만 16절의 채점기 보정을 적용한다: MSE ×1.042, DS +0.0126(이 채점기가 scDFM의 Additive 행을 그만큼 낮게 읽었다).
+
+**Table 1. Norman additive**
+
+| | L2 ↓ | MSE ↓ | MAE ↓ | DE-Spearman ↑ | Pearson Δ ↑ | DS ↑ |
+|---|---|---|---|---|---|---|
+| CellFlow | 1.7064 | 0.00392 | 0.02207 | 0.5503 | 0.8678 | 0.9321 |
+| scDFM | 1.7043 | **0.00315** | 0.02155 | 0.5705 | 0.8853 | **0.9737** |
+| scPKR2 (nEp0fm) | **1.6670**ᵃ | 0.00357 | **0.02079** | **0.5779** | **0.9024** | 0.9573 |
+
+**Table 2. Norman combinations**
+
+| | 구분 | L2 ↓ | MSE ↓ | MAE ↓ | DE-Spearman ↑ | Pearson Δ ↑ | DS ↑ |
+|---|---|---|---|---|---|---|---|
+| CellFlow | Single | 1.6758 | 0.0035 | 0.0191 | 0.2860 | 0.7109 | 0.8072 |
+| scDFM | Single | 1.6186 | **0.0030** | 0.0190 | **0.6957** | 0.7127 | **0.8914** |
+| scPKR2 (nEp0fm) | Single | **1.4475** | 0.00301ᵇ | **0.01697** | 0.5764 | **0.7750** | 0.8846 |
+| CellFlow | Double | 2.1042 | 0.0049 | 0.0236 | 0.5074 | 0.8095 | 0.8622 |
+| scDFM | Double | **2.0309** | **0.0047** | **0.0235** | 0.5676 | 0.8357 | **0.9189** |
+| scPKR2 (nEp0fm) | Double | 2.0419ᵃ | 0.00550 | 0.02373 | **0.6251** | **0.8605** | 0.8988 |
+
+**Table 3. ComboSciPlex**
+
+| | L2 ↓ | MSE ↓ | MAE ↓ | DE-Spearman ↑ | Pearson Δ ↑ | DS ↑ |
+|---|---|---|---|---|---|---|
+| scDFM | 1.6567 | **0.0028** | **0.0220** | **0.8289** | **0.8933** | **0.8776** |
+| scPKR2 (cDfmP) | **1.6067** | 0.00381 | 0.02203ᵇ | 0.8115 | 0.7578 | 0.8759ᶜ |
+
+CellFlow는 Table 3을 보고하지 않았다.
+
+ᵃ 차이가 run 간 표준편차와 scDFM Additive 행의 재현 오차(N_p에서 1.874 대 1.940, 0.065)보다 작다. "비슷하다"로 쓴다.
+ᵇ scDFM이 보고한 자릿수(0.0030, 0.0220)로 반올림하면 동률이다.
+ᶜ 0.0017 차이. 10개 seed 중 한 seed에서 순위가 한 칸 바뀌는 정도(0.002)다.
+
+**이긴 열 수**
+
+| | T1 | T2 Single | T2 Double | T3 |
+|---|---|---|---|---|
+| vs scDFM | 4/6 | 3/6 | 2/6 | 1/6 (MAE 동률) |
+| vs CellFlow | 6/6 | 6/6 | 4/6 | – |
+
+**L2의 퍼짐**
+
+| | 평균 | sd (run 간) | scDFM보다 낮은 run | fold별 평균 |
+|---|---|---|---|---|
+| T1 | 1.6670 | 0.090 | 10/15 | 1.5569 / 1.6056 / 1.7141 / 1.8037 / 1.6546 |
+| T2 Single | 1.4475 | 0.105 | 12/15 | 1.4081 / 1.4005 / 1.3622 / 1.6430 / 1.4236 |
+| T2 Double | 2.0419 | 0.274 | 6/15 | 1.6431 / 2.1022 / 1.9095 / 2.4425 / 2.1122 |
+| T3 | 1.6067 | 0.104 | 7/10 | (fold 1개) |
+
+**보정 전 값** (`arm_table.py`가 출력하는 값): MSE는 T1 0.00343, T2 Single 0.00289, T2 Double 0.00528, T3 0.00366.
+DS는 0.9447, 0.8720, 0.8862, 0.8633.
+
+**재현**
+
+    python scripts/arm_table.py --group double --device cuda T1='results/runs/nEp0fm_f*_s*'
+    python scripts/arm_table.py --group single --group-export --device cuda T2='results/runs/nEp0fm_comb_f*_s*'
+    python scripts/arm_table.py --group double --group-export --device cuda T2='results/runs/nEp0fm_comb_f*_s*'
+    python scripts/arm_table.py --group all --device cuda T3='results/runs/cDfmP_s?'
+    python scripts/paper_compare.py --markdown --digits 5

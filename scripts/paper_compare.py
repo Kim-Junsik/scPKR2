@@ -5,16 +5,20 @@ not reproducible from this repository - nothing here can recompute them. They li
 source so that a table can be redrawn without the screenshots, which is how they were
 lost once already.
 
-(v2's row was removed from this copy; it is not a comparison target here.)
-scPKR's row WAS v2's, measured and frozen at 20a24c3: scripts/paper_table.py over its
-runs, the sample gate with the gamma realisation at 4,096 cells, so its L2 and the
-five cell-eval columns beside it come from one prediction rather than two. The mean
-that model states - the soft gate, which is what an L2 between means asks for - is
-carried separately in SOFT_L2 and is the lower of the two everywhere.
+THE scPKR2 (ours) ROWS are the final models, fixed 2026-11-06 (docs/FINDINGS.md section
+35): nEp0fm for Tables 1 and 2 (15 runs each, 5 folds x 3 seeds), cDfmP for Table 3 (10
+seeds). Measured the way scDFM reports, and reproduced from the runs by
+scripts/arm_table.py:
 
-IT IS A COMPARISON ROW HERE, NOT AN "ours". This repository's model has to beat it,
-and it is listed beside the published models for that reason. A row for this
-repository is added once there is something measured to put in it.
+  L2           soft gate, the mean bounded, N_p predicted cells (scDFM eq. 15,
+               --n-cells 0), on the 1,000 scanpy-HVG genes of the test subset
+  MSE MAE PD DS  the same gate, 128 predicted cells, cell-eval 0.5.42 + pdex 0.1.21
+  DE-Spearman  de_spearman_sig under the SAMPLE gate: the soft gate emits no zeros,
+               so against a control that is 86-93 % zeros every gene tests significant
+
+The scorer correction of section 16 is applied to our rows only: MSE x 1.042 and DS
++ 0.0126 (this scorer read scDFM's Additive row that much low). arm_table.py prints
+the uncorrected values.
 """
 import argparse
 
@@ -36,14 +40,13 @@ TABLES = {
  ("STATE",     [17.3330, 0.30059, 0.24705, 0.5288, -0.0108,  0.5135, -0.0069,  0.2515]),
  ("scDFM",      [1.7043, 0.00315, 0.02155, 0.5705,  0.8853,  0.9737,  0.8468,  0.9260]),
  ("CellFlow",   [1.7064, 0.00392, 0.02207, 0.5503,  0.8678,  0.9321,  0.8395,  0.8988]),
- # Five folds by three seeds, 500 epochs. Scored THE WAY THE PUBLISHED ROWS WERE: the
- # soft gate with the per-cell mean bounded, 128 predicted cells per perturbation
- # against every real cell, cell-eval 0.5.42 with pdex 0.1.21, and DE-Spearman read
- # from de_spearman_sig. Under that protocol the Additive baseline reproduces the
- # paper's row: MSE 0.00429 / 0.00448, MAE 0.02360 / 0.02276, DE-Spearman 0.5543 /
- # 0.5564, Pearson delta 0.9019 / 0.9024, DS 0.9560 / 0.9686.
+ # nEp0fm_f{0-4}_s{0-2}. The protocol is in the module docstring. Under it the Additive
+ # baseline reproduces the paper's row: MSE 0.00429 / 0.00448, MAE 0.02360 / 0.02276,
+ # DE-Spearman 0.5543 / 0.5564, Pearson delta 0.9019 / 0.9024, DS 0.9560 / 0.9686.
+ # L2 is within error of scDFM's (sd 0.090 over runs; the Additive row reproduces at
+ # N_p to 0.065), so it is "comparable", not a win.
  ("scPKR2 (ours)",
-                [1.6439, 0.00357, 0.02081, 0.6630,  0.8949,  0.9431, MISSING, MISSING]),
+                [1.6670, 0.00357, 0.02079, 0.5779,  0.9024,  0.9573, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Single": [
  ("Control",    [2.6834, 0.0095, 0.0263, NA,      NA,     0.5217,  0.1618,  0.1982]),
@@ -54,6 +57,10 @@ TABLES = {
  ("STATE",     [18.2543, 0.3333, 0.2693,  0.6116, 0.0004, 0.5236,  0.0154,  0.2386]),
  ("scDFM",      [1.6186, 0.0030, 0.0190,  0.6957, 0.7127, 0.8914,  0.6659,  0.8116]),
  ("CellFlow",   [1.6758, 0.0035, 0.0191,  0.2860, 0.7109, 0.8072,  0.6138,  0.6753]),
+ # nEp0fm_comb_f{0-4}_s{0-2}, Single block exported and scored on its own (--group).
+ # MSE ties scDFM at the published precision (0.0030).
+ ("scPKR2 (ours)",
+                [1.4475, 0.00301, 0.01697, 0.5764, 0.7750, 0.8846, MISSING, MISSING]),
 ],
 "Table 2  Norman holdout split - Double": [
  ("Control",    [4.1882, 0.0207, 0.0423, NA,      NA,     0.5322, -0.1303, -0.0265]),
@@ -64,36 +71,26 @@ TABLES = {
  ("STATE",     [18.4458, 0.3404, 0.2733,  0.4071, 0.0061, 0.5289, -0.0023,  0.2580]),
  ("scDFM",      [2.0309, 0.0047, 0.0235,  0.5676, 0.8357, 0.9189,  0.7769,  0.8688]),
  ("CellFlow",   [2.1042, 0.0049, 0.0236,  0.5074, 0.8095, 0.8622,  0.6780,  0.7155]),
+ # The same runs, Double block. L2 is 0.011 behind scDFM, within error: "comparable".
+ ("scPKR2 (ours)",
+                [2.0419, 0.00550, 0.02373, 0.6251, 0.8605, 0.8988, MISSING, MISSING]),
 ],
 "Table 3  ComboSciPlex": [
  ("Control",    [5.3716, 0.0324, 0.0698, NA,      NA,     0.5714, MISSING, MISSING]),
  ("scGPT",      [1.6934, 0.0031, 0.0251, -0.1261, 0.8322, 0.8571, MISSING, MISSING]),
  ("CPA",        [1.6592, 0.0029, 0.0240,  0.7906, 0.8150, 0.8980, MISSING, MISSING]),
  ("scDFM",      [1.6567, 0.0028, 0.0220,  0.8289, 0.8933, 0.8776, MISSING, MISSING]),
+ # cDfmP_s{0-9}: the ComboSciPlex model with train.pearson_weight=10, all seven test
+ # conditions. L2 sd 0.104 over seeds, 7/10 runs below scDFM. MAE ties scDFM at the
+ # published precision (0.0220); DS is 0.0017 behind, one rank flip in one of ten seeds.
  ("scPKR2 (ours)",
-                # WITHDRAWN. Every figure here came from c1_combo_long, which was a
-                # lucky draw under a code state that no longer exists: the same seed
-                # scores 1.8070 now, and three seeds average 1.7713 +/- 0.031. The row
-                # is re-measured before it is quoted again.
-                [MISSING, MISSING, MISSING, MISSING, MISSING, MISSING,
-                 MISSING, MISSING]),
+                [1.6067, 0.00381, 0.02203, 0.8115, 0.7578, 0.8759, MISSING, MISSING]),
 ],
 }
 
-# The soft gate: the mean the model states, computed exactly rather than sampled. An L2
-# between population means is what this column asks for, and the realisation only adds
-# variance to it - 0.047 to 0.091 on three blocks, and 0.697 on ComboSciPlex, which is
-# out of line with the rest and not yet explained.
-# This repository's L2, measured by scripts/compare_to_ridge.py under the soft gate at
-# 4,096 cells - the same protocol the ridge row is quoted under. ComboSciPlex has one
-# fold, so its number is final rather than a per-fold reading. The five cell-eval columns
-# are blank until run_celleval.py has produced them.
-# ONE PREDICTION FOR ALL SIX COLUMNS. The row is the sample gate, so its L2 and its five
-# cell-eval columns come from the same cells. v2 could not do that: its sampled L2 was
-# 0.697 above the mean it stated on this block, so a table had to pick a gate per column
-# and explain the gap. Here the two agree to 0.023 - soft 1.4900 against sample 1.5129 -
-# and the choice stops mattering.
-OURS = {}  # withdrawn with the row above; see docs/FINDINGS.md section 4
+# Notes render() can print under a table. Both are empty: the scPKR2 rows carry their
+# protocol in the module docstring and in the comments beside them.
+OURS = {}
 
 SOFT_L2 = {}  # v2's soft-gate L2; dropped with its rows
 
