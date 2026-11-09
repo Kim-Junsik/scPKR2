@@ -611,6 +611,14 @@ DEFAULTS: dict[str, Any] = {
         #         partner nothing. In operator units, NOT on gene_endpoint_weight's scale:
         #         scripts/shrink_weight.py sets it from a trained reference run.
         "shrink_weight": 0.0,
+        # Which cells the hurdle likelihood compares. false (every run up to and
+        # including best-2026-11-06): the prediction for control cell i, in batch order,
+        # against target cell columns[i] - the OT partner of control cell rows[i], not of
+        # i - so in effect each prediction meets a random cell of the condition. true:
+        # the prediction for rows[i] against columns[i], the pair the coupling drew, as
+        # flow matching already uses. The gene-space mean terms are unchanged either
+        # way: they compare batch means and use no pairing.
+        "head_on_pairs": False,
 
         # --- the residual target ---
         # ridge  r_S = m_S - m_ctrl - sum_a w_a, the residual the additive component

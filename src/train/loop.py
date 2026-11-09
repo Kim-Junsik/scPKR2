@@ -237,6 +237,11 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
             f"(x mean squared effect {metric.scale:.4f}; discrim width {metric.width:.5f} "
             f"over {len(metric.names)} training conditions)")
 
+    # config.py: false is every run to date; true pairs the hurdle with the OT draw.
+    head_on_pairs = bool(train_cfg.get("head_on_pairs", False))
+    if head_on_pairs:
+        log("  hurdle likelihood on the OT pairs (train.head_on_pairs)")
+
     shrink_weight = float(train_cfg.get("shrink_weight", 0.0))
     shrink_counts = shrink_members = None
     if shrink_weight > 0:
@@ -370,7 +375,14 @@ def train(model, data, stats, train_conditions: list[str], config: dict,
                     loss = loss + discrim_weight * metric.scale * discrim
                     totals["discrim"].append(float(discrim))
 
-            head_loss, head_parts = model.head.loss(params, x_target_c)
+            # The model is per cell (no batch statistics), so the prediction for the
+            # paired control cells is a row selection of the one already made.
+            head_params = params
+            if head_on_pairs:
+                head_params = {k: v[rows] if torch.is_tensor(v) and v.dim() > 0
+                               and v.shape[0] == x_source.shape[0] else v
+                               for k, v in params.items()}
+            head_loss, head_parts = model.head.loss(head_params, x_target_c)
             loss = loss + head_loss
             totals["head"].append(float(head_loss))
 
