@@ -1,0 +1,140 @@
+--- a/src/script/run.py
++++ b/src/script/run.py
+@@ -156,7 +156,9 @@
+         
+         idx = torch.randperm(source.shape[0])
+         source = source[idx]
+-        N = 128
++        # scPKR2 patch: SCDFM_PRED_CELLS sets the predicted cells per condition (128 as
++        # released); 0 predicts N_p, as many as the condition has - scDFM's L2 (eq. 15).
++        N = int(os.environ.get("SCDFM_PRED_CELLS", "128")) or target.shape[0]
+         source = source[:N]
+         
+         pred_expressions = []
+@@ -255,14 +257,23 @@
+ 
+     data_manager.load_data(config.data_name)
+     data_manager.process_data(n_top_genes=config.n_top_genes, split_method=config.split_method, fold=config.fold, use_negative_edge=config.use_negative_edge, k=config.topk)
++    # scPKR2 patch: SCDFM_PREP_ONLY=1 builds the data files (gene mask, processed h5ad)
++    # in one process and exits, so a multi-GPU launch never has two ranks writing them.
++    if os.environ.get("SCDFM_PREP_ONLY"):
++        raise SystemExit(0)
+     train_sampler, valid_sampler, test_dl = data_manager.load_flow_data(batch_size=config.batch_size)
+     
+     train_dataset = PerturbationDataset(train_sampler, config.batch_size)
+-    dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False,num_workers=8,pin_memory=True,persistent_workers=True)  # batch_size=1 因为每个getitem本身就是一个batch
++    # scPKR2 patch: SCDFM_WORKERS sets the loader workers (8 as released). A small
++    # /dev/shm kills workers under a multi-GPU launch; 0 loads in the main process.
++    workers = int(os.environ.get("SCDFM_WORKERS", "8"))
++    dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False,num_workers=workers,pin_memory=True,persistent_workers=workers > 0)  # batch_size=1 因为每个getitem本身就是一个batch
+     if config.use_negative_edge:
+         mask_path = os.path.join(data_manager.data_path, data_manager.data_name,'mask_fold_'+str(config.fold)+'topk_'+str(config.topk)+config.split_method+'_negative_edge'+'.pt')
+     else:
+         mask_path = os.path.join(data_manager.data_path, data_manager.data_name,'mask_fold_'+str(config.fold)+'topk_'+str(config.topk)+config.split_method+'.pt')
++    # scPKR2 patch: SCDFM_TAG keeps one split's gene mask apart from another's.
++    mask_path = mask_path[:-3] + os.environ.get("SCDFM_TAG", "") + '.pt'
+     vf = instantiate_model(config.model_type,
+                            ntoken = config.ntoken,
+                            d_model = config.d_model,
+@@ -293,6 +304,12 @@
+     vf = accelerator.prepare(vf)
+     optimizer, scheduler, dataloader = accelerator.prepare(optimizer,scheduler,dataloader)
+     inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
++    # scPKR2 patch: SCDFM_TEST_ONLY=<folder> scores the checkpoint given by
++    # --checkpoint_path once, the way the training loop scores, and exits.
++    if os.environ.get("SCDFM_TEST_ONLY"):
++        os.makedirs(os.environ["SCDFM_TEST_ONLY"], exist_ok=True)
++        test(valid_sampler, vf, accelerator, batch_size=config.batch_size, path=os.environ["SCDFM_TEST_ONLY"], vocab=vocab)
++        raise SystemExit(0)
+     pbar = tqdm.tqdm(total=config.steps, initial=start_iteration)
+     iteration = start_iteration
+     while iteration < config.steps:
+@@ -315,7 +332,8 @@
+             scheduler.step()
+ 
+             
+-            if iteration % config.print_every == 0:
++            # scPKR2 patch: also the last step, which the released loop never saves.
++            if iteration % config.print_every == 0 or iteration == config.steps - 1:
+                 save_path_ = os.path.join(save_path, f'iteration_{iteration}')
+                 os.makedirs(save_path_, exist_ok=True)
+                 if accelerator.is_main_process:
+--- a/src/data_process/data.py
++++ b/src/data_process/data.py
+@@ -16,6 +16,18 @@
+ import tqdm
+ from random import shuffle
+ from src.utils.utils import build_gene_coexpression_graph,sorted_pad_mask
++
++
++def _split_override():
++    """scPKR2 patch. SCDFM_SPLIT_JSON names {"test": [...], "exclude": [...]}, conditions
++    in scDFM's naming ('A+control'). Excluded conditions are dropped before anything is
++    computed from the data - genes, mask, training - and the test list replaces the
++    split's. Unset, the released behaviour is unchanged."""
++    path = os.environ.get("SCDFM_SPLIT_JSON")
++    if not path:
++        return None
++    with open(path) as handle:
++        return json.load(handle)
+ # combosciplex url: https://figshare.com/articles/dataset/combosciplex/25062230?file=44229635
+ # 'norman' url = 'https://dataverse.harvard.edu/api/access/datafile/6154020'
+ 
+@@ -60,12 +72,17 @@
+                 
+                 self.adata.write(os.path.join(self.data_path, self.data_name, 'processed.h5ad'))
+             
++            override = _split_override()
++            if override is not None:
++                self.adata = self.adata[~self.adata.obs['condition'].isin(override['exclude']).to_numpy()].copy()
+             self.adata.X = self.adata.layers["counts"].copy()
+             sc.pp.normalize_total(self.adata)
+             sc.pp.log1p(self.adata)
+             sc.pp.highly_variable_genes(self.adata, inplace=True, n_top_genes=n_top_genes)
+                 
+-            if 'test_conditions' in kwargs.keys():
++            if override is not None:
++                test_conditions = override['test']
++            elif 'test_conditions' in kwargs.keys():
+                 test_conditions = kwargs['test_conditions']
+             else:
+                 test_conditions = ['Panobinostat+Crizotinib', 
+@@ -94,6 +111,10 @@
+             self.perturbation_dict = {perturbation: i for i, perturbation in enumerate(unique_perturbation)}
+             # self._val_manager = 
+         elif self.data_name == 'norman' or self.data_name == 'norman_umi_go_filtered':
++            override = _split_override()
++            if override is not None:
++                named = self.adata.obs['condition'].astype(str).str.replace('ctrl', 'control')
++                self.adata = self.adata[~named.isin(override['exclude']).to_numpy()].copy()
+             
+             sc.pp.highly_variable_genes(self.adata, inplace=True, n_top_genes=n_top_genes)
+             unique_perturbation = []
+@@ -190,7 +211,7 @@
+             self.adata.obs['mode'] = 'train'
+             
+             
+-            if split_method == 'combinations':
++            if split_method == 'combinations' and override is None:
+                 self.split_results[fold]['test'] = self.split_results[fold]['test'][:15]
+                 remove_genes = []
+                 [remove_genes.extend(p.split('+')) for p in self.split_results[fold]['test']]
+@@ -200,7 +221,8 @@
+                 self.split_results[fold]['test'].extend(remove_genes_condition)            
+             
+             
+-            self.adata.obs.loc[self.adata.obs['condition'].isin(self.split_results[fold]['test']), 'mode'] = 'test'
++            test_list = override['test'] if override is not None else self.split_results[fold]['test']
++            self.adata.obs.loc[self.adata.obs['condition'].isin(test_list), 'mode'] = 'test'
+             
+             self.adata_train = self.adata[self.adata.obs['mode'] == 'train']
+             self.adata_test = self.adata[(self.adata.obs['mode'] == 'test') | (self.adata.obs['control'] == 1)]
+@@ -229,6 +251,8 @@
+             mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'_negative_edge'+'.pt')
+         else:
+             mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'.pt')
++        # scPKR2 patch: SCDFM_TAG keeps one split's gene mask apart from another's.
++        mask_path = mask_path[:-3] + os.environ.get("SCDFM_TAG", "") + '.pt'
+         if os.path.exists(mask_path):
+             self.mask = torch.load(mask_path)
+         else:
