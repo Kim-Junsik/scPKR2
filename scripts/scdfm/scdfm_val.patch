@@ -11,7 +11,23 @@
          source = source[:N]
          
          pred_expressions = []
-@@ -255,14 +257,23 @@
+@@ -185,6 +187,15 @@
+     real = ad.AnnData(X=all_target_expressions, obs=obs_real)
+     
+ 
++    # scPKR2 patch: SCDFM_NO_EVAL=1 writes the prediction and stops there; scPKR2's scorer
++    # (scripts/scdfm/score_scdfm.py) scores it the way it scores scPKR2. pdex's shared
++    # matrix dies on a small /dev/shm, and the scPKR2 scorer keeps it as a file.
++    if os.environ.get("SCDFM_NO_EVAL"):
++        if accelerator.is_main_process:
++            pred.write_h5ad(os.path.join(path, 'pred.h5ad'))
++            real.write_h5ad(os.path.join(path, 'real.h5ad'))
++            print(f"prediction written to {path} (SCDFM_NO_EVAL)")
++        return None
+     eval_score = None
+     if accelerator.is_main_process:
+         evaluator = MetricsEvaluator(
+@@ -255,14 +266,23 @@
  
      data_manager.load_data(config.data_name)
      data_manager.process_data(n_top_genes=config.n_top_genes, split_method=config.split_method, fold=config.fold, use_negative_edge=config.use_negative_edge, k=config.topk)
@@ -36,7 +52,7 @@
      vf = instantiate_model(config.model_type,
                             ntoken = config.ntoken,
                             d_model = config.d_model,
-@@ -293,6 +304,12 @@
+@@ -293,6 +313,12 @@
      vf = accelerator.prepare(vf)
      optimizer, scheduler, dataloader = accelerator.prepare(optimizer,scheduler,dataloader)
      inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
@@ -49,7 +65,7 @@
      pbar = tqdm.tqdm(total=config.steps, initial=start_iteration)
      iteration = start_iteration
      while iteration < config.steps:
-@@ -315,7 +332,8 @@
+@@ -315,7 +341,8 @@
              scheduler.step()
  
              
