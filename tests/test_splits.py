@@ -414,6 +414,15 @@ def test_norman_validation_serves_combinations_as_the_table_2_regime(config):
     assert fold["test_doubles"] == additive["test"]
 
 
+@pytest.mark.parametrize("method", ["additive", "combinations"])
+def test_norman_validation_never_scores_a_real_test_condition(config, method):
+    """ZBTB25 is a gene of a validation double AND of a real Table 2 test double, so its
+    single is held out by both. It used to be scored as a validation single, which read a
+    real test condition during development; it is now only excluded."""
+    fold = splits.folds(_norman_validation_config(config), method)[0]
+    assert not set(fold["test"]) & set(fold["excluded"])
+
+
 def test_norman_validation_still_refuses_an_unknown_method(config):
     with pytest.raises(ValueError, match="additive and method=combinations only"):
         splits.folds(_norman_validation_config(config), "generated_pairs")
@@ -596,7 +605,9 @@ def test_combinations_validation_holds_out_the_scored_doubles_singles():
     for gene in genes:
         single = f"{gene}+{splits.CONTROL_SUFFIX}"
         assert single in fold["held_out_singles"]
-        assert single in fold["test"]
+        # Scored, unless it is also a single of the real test (ZBTB25): then it is only
+        # excluded, and held out of training all the same.
+        assert (single in fold["test"]) != (single in fold["excluded"])
         assert single not in fold["train_doubles"]
 
 

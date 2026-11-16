@@ -288,6 +288,11 @@ def norman_validation_combinations(reference: list[dict[str, Any]], fold: int,
 
     genes = {gene for pair in validation for gene in pair.split("+")}
     validation_singles = [f"{gene}+{control_suffix}" for gene in sorted(genes)]
+    # A validation single that is ALSO a single of the real test (fold 0: ZBTB25+ctrl) is
+    # held out of training either way, but it must not be scored: scoring it would read a
+    # real Table 2 test condition during development. It stays in `excluded`.
+    real_test = set(combination["test"])
+    scored_singles = [s for s in validation_singles if s not in real_test]
     # Every double the combinations fold could train on, minus the ones we now score.
     all_doubles = list(source["train"]) + list(source["test"])
     held = set(validation) | set(combination["test_doubles"])
@@ -301,7 +306,7 @@ def norman_validation_combinations(reference: list[dict[str, Any]], fold: int,
         # separately are both measured. The single block is structurally guaranteed to equal
         # the additive baseline here - B_S sums over pairs, so no parameter can move a
         # single - and scoring it is how that guarantee gets checked rather than assumed.
-        "test": validation + validation_singles,
+        "test": validation + scored_singles,
         "train_doubles": [c for c in all_doubles if c not in held],
         # Neither trained on nor scored. The real test's singles are in here too, which is
         # the source of the discrepancy recorded in this function's docstring.
