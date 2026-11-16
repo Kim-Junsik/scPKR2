@@ -27,13 +27,15 @@
      eval_score = None
      if accelerator.is_main_process:
          evaluator = MetricsEvaluator(
-@@ -255,14 +266,23 @@
+@@ -255,14 +266,25 @@
  
      data_manager.load_data(config.data_name)
      data_manager.process_data(n_top_genes=config.n_top_genes, split_method=config.split_method, fold=config.fold, use_negative_edge=config.use_negative_edge, k=config.topk)
-+    # scPKR2 patch: SCDFM_PREP_ONLY=1 builds the data files (gene mask, processed h5ad)
++    # scPKR2 patch: SCDFM_PREP_ONLY=1 builds the data files (gene mask, processed h5ad,
++    # vocabulary)
 +    # in one process and exits, so a multi-GPU launch never has two ranks writing them.
 +    if os.environ.get("SCDFM_PREP_ONLY"):
++        process_vocab(data_manager, config)
 +        raise SystemExit(0)
      train_sampler, valid_sampler, test_dl = data_manager.load_flow_data(batch_size=config.batch_size)
      
@@ -52,7 +54,7 @@
      vf = instantiate_model(config.model_type,
                             ntoken = config.ntoken,
                             d_model = config.d_model,
-@@ -293,6 +313,12 @@
+@@ -293,6 +315,12 @@
      vf = accelerator.prepare(vf)
      optimizer, scheduler, dataloader = accelerator.prepare(optimizer,scheduler,dataloader)
      inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
@@ -65,7 +67,7 @@
      pbar = tqdm.tqdm(total=config.steps, initial=start_iteration)
      iteration = start_iteration
      while iteration < config.steps:
-@@ -315,7 +341,8 @@
+@@ -315,7 +343,8 @@
              scheduler.step()
  
              
@@ -154,3 +156,17 @@
          if os.path.exists(mask_path):
              self.mask = torch.load(mask_path)
          else:
+--- a/src/utils/utils.py
++++ b/src/utils/utils.py
+@@ -98,7 +98,10 @@
+     
+     
+ def process_vocab(data_manager, config):
+-    vocab_path = os.path.join('src/tokenizer',config.data_name+'_'+str(config.n_top_genes)+'_highly_vocab.json')
++    # scPKR2 patch: SCDFM_TAG gives each split its own vocabulary. A split that drops
++    # conditions selects a slightly different gene set, and the shared file would not
++    # contain every gene (encode raises on an unknown token).
++    vocab_path = os.path.join('src/tokenizer',config.data_name+'_'+str(config.n_top_genes)+os.environ.get("SCDFM_TAG", "")+'_highly_vocab.json')
+     if os.path.exists(vocab_path):
+         print('##### loading vocab from file #####')
+         vocab = GeneVocab.from_file(vocab_path)
