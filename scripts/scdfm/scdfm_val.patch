@@ -98,7 +98,21 @@
  # combosciplex url: https://figshare.com/articles/dataset/combosciplex/25062230?file=44229635
  # 'norman' url = 'https://dataverse.harvard.edu/api/access/datafile/6154020'
  
-@@ -60,12 +72,17 @@
+@@ -54,18 +66,29 @@
+                     lambda x: True if x["condition"] == "control" else False, axis=1
+                 )
+                 
+-                annotate_compounds(self.adata, compound_keys=["Drug1", "Drug2"])
+-                get_molecular_fingerprints(self.adata, compound_keys=["Drug1", "Drug2"])
++                # scPKR2 patch: SCDFM_SKIP_ANNOTATE=1 skips the PubChem annotation (pertpy and
++                # the internet). Its columns and fingerprints are written to processed.h5ad
++                # and read nowhere else in scDFM: drugs are a learned embedding table.
++                if not os.environ.get("SCDFM_SKIP_ANNOTATE"):
++                    annotate_compounds(self.adata, compound_keys=["Drug1", "Drug2"])
++                    get_molecular_fingerprints(self.adata, compound_keys=["Drug1", "Drug2"])
++                else:
++                    self.adata.uns["fingerprints"] = {}
+                 self.adata.uns["fingerprints"]["control"] = np.zeros(1024)
                  
                  self.adata.write(os.path.join(self.data_path, self.data_name, 'processed.h5ad'))
              
@@ -117,7 +131,7 @@
                  test_conditions = kwargs['test_conditions']
              else:
                  test_conditions = ['Panobinostat+Crizotinib', 
-@@ -94,6 +111,10 @@
+@@ -94,6 +117,10 @@
              self.perturbation_dict = {perturbation: i for i, perturbation in enumerate(unique_perturbation)}
              # self._val_manager = 
          elif self.data_name == 'norman' or self.data_name == 'norman_umi_go_filtered':
@@ -128,7 +142,7 @@
              
              sc.pp.highly_variable_genes(self.adata, inplace=True, n_top_genes=n_top_genes)
              unique_perturbation = []
-@@ -190,7 +211,7 @@
+@@ -190,7 +217,7 @@
              self.adata.obs['mode'] = 'train'
              
              
@@ -137,7 +151,7 @@
                  self.split_results[fold]['test'] = self.split_results[fold]['test'][:15]
                  remove_genes = []
                  [remove_genes.extend(p.split('+')) for p in self.split_results[fold]['test']]
-@@ -200,7 +221,8 @@
+@@ -200,7 +227,8 @@
                  self.split_results[fold]['test'].extend(remove_genes_condition)            
              
              
@@ -147,7 +161,7 @@
              
              self.adata_train = self.adata[self.adata.obs['mode'] == 'train']
              self.adata_test = self.adata[(self.adata.obs['mode'] == 'test') | (self.adata.obs['control'] == 1)]
-@@ -229,6 +251,8 @@
+@@ -229,6 +257,8 @@
              mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'_negative_edge'+'.pt')
          else:
              mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'.pt')

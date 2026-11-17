@@ -24,7 +24,8 @@ with scPKR2's scorer once training ends, so every checkpoint gets a row.
 
 PREPARATION happens once, in queue A, single process, before any training: the split
 files, then each family's gene mask, vocabulary and (ComboSciPlex, the first time)
-processed.h5ad - which scDFM builds by querying PubChem, so that step needs the internet.
+processed.h5ad - without scDFM's PubChem annotation (SCDFM_SKIP_ANNOTATE), whose columns
+nothing in scDFM reads.
 Queue B waits for queue A's marker. Two ranks or two queues never write one file.
 """
 
@@ -61,8 +62,10 @@ def run_args(family: str, steps: int, print_every: int, name: str) -> str:
 
 
 def env(family: str, split_dir: str) -> str:
+    # SCDFM_SKIP_ANNOTATE: ComboSciPlex's first preparation would query PubChem through
+    # pertpy for drug annotations that nothing in scDFM reads (drugs are a learned table).
     return (f"SCDFM_SPLIT_JSON={split_dir}/{family}.json SCDFM_TAG=_{family} "
-            "XLA_PYTHON_CLIENT_PREALLOCATE=false PYTHONPATH=.")
+            "SCDFM_SKIP_ANNOTATE=1 XLA_PYTHON_CLIENT_PREALLOCATE=false PYTHONPATH=.")
 
 
 def main() -> None:
