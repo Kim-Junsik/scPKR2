@@ -54,7 +54,7 @@
      vf = instantiate_model(config.model_type,
                             ntoken = config.ntoken,
                             d_model = config.d_model,
-@@ -293,6 +315,12 @@
+@@ -293,8 +315,19 @@
      vf = accelerator.prepare(vf)
      optimizer, scheduler, dataloader = accelerator.prepare(optimizer,scheduler,dataloader)
      inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
@@ -66,8 +66,28 @@
 +        raise SystemExit(0)
      pbar = tqdm.tqdm(total=config.steps, initial=start_iteration)
      iteration = start_iteration
++    # scPKR2 patch: SCDFM_ACCUM=k averages k batches per optimizer step (gradient
++    # accumulation). 2 x 24 on one GPU is the released batch 48 without a second GPU,
++    # and without NCCL, which needs more /dev/shm than some machines have.
++    accum = int(os.environ.get("SCDFM_ACCUM", "1"))
++    micro = 0
      while iteration < config.steps:
-@@ -315,7 +343,8 @@
+         for batch_data in dataloader:
+             
+@@ -309,13 +342,19 @@
+             
+             set_requires_grad_for_p_only(vf, p_only=config.mode)
+             loss = train_step(source, target, perturbation_id, vf, criterion, accelerator, noise_type=config.noise_type, mode=config.mode)
+-            optimizer.zero_grad(set_to_none=True)
+-            accelerator.backward(loss)
++            if micro == 0:
++                optimizer.zero_grad(set_to_none=True)
++            accelerator.backward(loss / accum)
++            micro += 1
++            if micro < accum:
++                continue
++            micro = 0
+             optimizer.step()
              scheduler.step()
  
              
@@ -77,6 +97,18 @@
                  save_path_ = os.path.join(save_path, f'iteration_{iteration}')
                  os.makedirs(save_path_, exist_ok=True)
                  if accelerator.is_main_process:
+@@ -337,5 +376,10 @@
+             pbar.update(1)
+             pbar.set_description(f'loss: {loss.item():.4f}, iteration: {iteration}')
+             iteration += 1
++            # scPKR2 patch: stop at --steps. The released loop finishes the pass over the
++            # data it is in (training perturbations x 1000 batches), so a run went on past
++            # --steps - on a cosine schedule that climbs back up after T_max.
++            if iteration >= config.steps:
++                break
+             
+             
+\ No newline at end of file
 --- a/src/data_process/data.py
 +++ b/src/data_process/data.py
 @@ -16,6 +16,18 @@
