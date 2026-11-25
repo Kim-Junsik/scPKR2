@@ -1,17 +1,21 @@
 --- a/src/script/run.py
 +++ b/src/script/run.py
-@@ -156,7 +156,9 @@
+@@ -156,8 +156,12 @@ def test(data_sampler, vf, accelerator,  batch_size=128, path='./',vocab=None,sc
          
          idx = torch.randperm(source.shape[0])
          source = source[idx]
 -        N = 128
+-        source = source[:N]
 +        # scPKR2 patch: SCDFM_PRED_CELLS sets the predicted cells per condition (128 as
 +        # released); 0 predicts N_p, as many as the condition has - scDFM's L2 (eq. 15).
++        # A ComboSciPlex condition can hold more cells than the control pool; the shuffled
++        # controls are then reused in turn, each draw starting from its own noise.
 +        N = int(os.environ.get("SCDFM_PRED_CELLS", "128")) or target.shape[0]
-         source = source[:N]
++        source = source[torch.arange(N, device=source.device) % source.shape[0]]
          
          pred_expressions = []
-@@ -185,6 +187,15 @@
+         for i in trange(0, N, batch_size):
+@@ -185,6 +189,15 @@ def test(data_sampler, vf, accelerator,  batch_size=128, path='./',vocab=None,sc
      real = ad.AnnData(X=all_target_expressions, obs=obs_real)
      
  
@@ -27,7 +31,7 @@
      eval_score = None
      if accelerator.is_main_process:
          evaluator = MetricsEvaluator(
-@@ -255,14 +266,25 @@
+@@ -255,14 +268,25 @@ if __name__ == "__main__":
  
      data_manager.load_data(config.data_name)
      data_manager.process_data(n_top_genes=config.n_top_genes, split_method=config.split_method, fold=config.fold, use_negative_edge=config.use_negative_edge, k=config.topk)
@@ -54,7 +58,7 @@
      vf = instantiate_model(config.model_type,
                             ntoken = config.ntoken,
                             d_model = config.d_model,
-@@ -293,8 +315,19 @@
+@@ -293,8 +317,19 @@ if __name__ == "__main__":
      vf = accelerator.prepare(vf)
      optimizer, scheduler, dataloader = accelerator.prepare(optimizer,scheduler,dataloader)
      inverse_dict = {v: str(k) for k, v in data_manager.perturbation_dict.items()}
@@ -74,7 +78,7 @@
      while iteration < config.steps:
          for batch_data in dataloader:
              
-@@ -309,13 +342,19 @@
+@@ -309,13 +344,19 @@ if __name__ == "__main__":
              
              set_requires_grad_for_p_only(vf, p_only=config.mode)
              loss = train_step(source, target, perturbation_id, vf, criterion, accelerator, noise_type=config.noise_type, mode=config.mode)
@@ -97,7 +101,7 @@
                  save_path_ = os.path.join(save_path, f'iteration_{iteration}')
                  os.makedirs(save_path_, exist_ok=True)
                  if accelerator.is_main_process:
-@@ -337,5 +376,10 @@
+@@ -337,5 +378,10 @@ if __name__ == "__main__":
              pbar.update(1)
              pbar.set_description(f'loss: {loss.item():.4f}, iteration: {iteration}')
              iteration += 1
@@ -111,7 +115,7 @@
 \ No newline at end of file
 --- a/src/data_process/data.py
 +++ b/src/data_process/data.py
-@@ -16,6 +16,18 @@
+@@ -16,6 +16,18 @@ import pdb
  import tqdm
  from random import shuffle
  from src.utils.utils import build_gene_coexpression_graph,sorted_pad_mask
@@ -130,7 +134,7 @@
  # combosciplex url: https://figshare.com/articles/dataset/combosciplex/25062230?file=44229635
  # 'norman' url = 'https://dataverse.harvard.edu/api/access/datafile/6154020'
  
-@@ -54,18 +66,29 @@
+@@ -54,18 +66,29 @@ class Data:
                      lambda x: True if x["condition"] == "control" else False, axis=1
                  )
                  
@@ -163,7 +167,7 @@
                  test_conditions = kwargs['test_conditions']
              else:
                  test_conditions = ['Panobinostat+Crizotinib', 
-@@ -94,6 +117,10 @@
+@@ -94,6 +117,10 @@ class Data:
              self.perturbation_dict = {perturbation: i for i, perturbation in enumerate(unique_perturbation)}
              # self._val_manager = 
          elif self.data_name == 'norman' or self.data_name == 'norman_umi_go_filtered':
@@ -174,7 +178,7 @@
              
              sc.pp.highly_variable_genes(self.adata, inplace=True, n_top_genes=n_top_genes)
              unique_perturbation = []
-@@ -190,7 +217,7 @@
+@@ -190,7 +217,7 @@ class Data:
              self.adata.obs['mode'] = 'train'
              
              
@@ -183,7 +187,7 @@
                  self.split_results[fold]['test'] = self.split_results[fold]['test'][:15]
                  remove_genes = []
                  [remove_genes.extend(p.split('+')) for p in self.split_results[fold]['test']]
-@@ -200,7 +227,8 @@
+@@ -200,7 +227,8 @@ class Data:
                  self.split_results[fold]['test'].extend(remove_genes_condition)            
              
              
@@ -193,7 +197,7 @@
              
              self.adata_train = self.adata[self.adata.obs['mode'] == 'train']
              self.adata_test = self.adata[(self.adata.obs['mode'] == 'test') | (self.adata.obs['control'] == 1)]
-@@ -229,6 +257,8 @@
+@@ -229,6 +257,8 @@ class Data:
              mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'_negative_edge'+'.pt')
          else:
              mask_path = os.path.join(self.data_path, self.data_name,'mask_fold_'+str(fold)+'topk_'+str(k)+split_method+'.pt')
@@ -204,7 +208,7 @@
          else:
 --- a/src/utils/utils.py
 +++ b/src/utils/utils.py
-@@ -98,7 +98,10 @@
+@@ -98,7 +98,10 @@ def load_checkpoint(checkpoint_path, model, optimizer, scheduler):
      
      
  def process_vocab(data_manager, config):
