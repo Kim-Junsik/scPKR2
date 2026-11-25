@@ -22,7 +22,7 @@ mean(real)|| on the scored genes. It is read at however many cells were predicte
 during training, N_p from a SCDFM_PRED_CELLS=0 pass (scDFM eq. 15) - and the n column says
 which.
 
-The last two rows are BEST (each column's best checkpoint, separately - the strictest
+The last two rows are BEST (each column's best TRAINED checkpoint, separately - the strictest
 target, since no single checkpoint need reach all of them) and LAST.
 """
 
@@ -154,8 +154,12 @@ def main() -> None:
         for row in rows:
             print(f"{row['iteration']:>10} {row['n']:>5} "
                   + " ".join(f"{row[n]:>8.4f}" for n in names))
-        best = {n: (max if higher[n] else min)(r[n] for r in rows) for n in names}
-        print(f"{'BEST':>10} {'':>5} " + " ".join(f"{best[n]:>8.4f}" for n in names))
+        # Trained checkpoints only: iteration 0 is the untrained model, and on DE-Spearman
+        # over a few conditions it can out-rank every trained one by chance (t3v0: 0.9).
+        trained = [r for r in rows if r["iteration"] > 0] or rows
+        best = {n: (max if higher[n] else min)(r[n] for r in trained) for n in names}
+        print(f"{'BEST':>10} {'':>5} " + " ".join(f"{best[n]:>8.4f}" for n in names)
+              + "   (iteration 0 not counted)")
         print(f"{'LAST':>10} {rows[-1]['n']:>5} " + " ".join(f"{rows[-1][n]:>8.4f}" for n in names))
 
         summary = os.path.join(args.result_dir, f"scpkr2_scores_{block}.csv")

@@ -48,6 +48,7 @@ from run_celleval import celleval_dir  # noqa: E402
 
 FOLDS = ["t3v0", "t3v1", "t3v2"]
 REAL, PRED, REPORTED = "de_nsig_counts_real", "de_nsig_counts_pred", "de_spearman_sig"
+NOTED: set[tuple[str, ...]] = set()
 
 
 def spearman(real: list[float], pred: list[float]) -> float:
@@ -81,9 +82,11 @@ def pool(paths: list[str]) -> tuple[float, list[float], int]:
         own.append(spearman([c[1] for c in rows], [c[2] for c in rows]))
         conditions += rows
     names = [c[0] for c in conditions]
-    if len(set(names)) != len(names):
-        print(f"  note: a condition is scored in two folds: "
-              f"{sorted({n for n in names if names.count(n) > 1})}")
+    twice = tuple(sorted({n for n in names if names.count(n) > 1}))
+    if twice and twice not in NOTED:
+        # Each fold's model held the condition out, so both predictions are kept.
+        NOTED.add(twice)
+        print(f"  note: held out by two folds, both predictions kept: {', '.join(twice)}")
     return (spearman([c[1] for c in conditions], [c[2] for c in conditions]), own,
             len(conditions))
 
@@ -104,10 +107,12 @@ def scdfm_rows(result: str, late: int) -> None:
         value, own, n = pool([by_fold[f][iteration] for f in FOLDS])
         values[iteration] = value
         print(f"{iteration:>10} {n:>3} {value:>8.4f}   " + " ".join(f"{v:>7.3f}" for v in own))
-    finite = {i: v for i, v in values.items() if np.isfinite(v)}
+    # BEST over trained checkpoints: iteration 0 is the untrained model, which no one
+    # would pick, and on 5-15 conditions it can out-rank every trained one by chance.
+    finite = {i: v for i, v in values.items() if np.isfinite(v) and i > 0}
     late_values = [v for i, v in finite.items() if i >= late]
     print(f"{'BEST':>10} {'':>3} {max(finite.values()):>8.4f}   (iteration "
-          f"{max(finite, key=finite.get)})")
+          f"{max(finite, key=finite.get)}; iteration 0 not counted)")
     print(f"{'LAST':>10} {'':>3} {values[iterations[-1]]:>8.4f}")
     if late_values:
         print(f"{'late mean':>10} {'':>3} {np.mean(late_values):>8.4f}   "
@@ -119,6 +124,9 @@ def our_rows(prefix: str, folder: str) -> None:
                     for p in glob.glob(os.path.join(ROOT, "results", "runs",
                                                     f"{prefix}_{FOLDS[0]}_s*"))})
     print(f"\n=== {prefix}  (results/runs/{prefix}_t3v<k>_s<seed>/{folder}) ===")
+    if not seeds:
+        print(f"  no run folders results/runs/{prefix}_{FOLDS[0]}_s* yet")
+        return
     print(f"{'seed':>10} {'n':>3} {'pooled':>8}   " + " ".join(f"{f:>7}" for f in FOLDS))
     values = []
     for seed in seeds:
