@@ -131,7 +131,8 @@ def celleval_means(run_dir: str, gate: str | None = None,
 def compute_l2(run_dir: str, device: str, n_cells: int, gate: str | None = None,
                infer_top_gene: int | None = None, group: str = "double",
                calibration: str | None = None,
-               realisation: str = "beta", bounded: bool = False) -> float:
+               realisation: str = "beta", bounded: bool = False,
+               effect_scale: float | None = None) -> float:
     """Eq. (15) over the fold's test doubles - the same conditions resid_R2 uses.
 
     `infer_top_gene` restricts the gene space to the subset scDFM scores on, which
@@ -148,6 +149,9 @@ def compute_l2(run_dir: str, device: str, n_cells: int, gate: str | None = None,
         overrides["realisation"] = realisation
     if bounded:
         overrides["bound_mean"] = True
+    if effect_scale is not None:
+        # The same eval.effect_scale run_celleval.py --effect-scale exported with.
+        overrides["effect_scale"] = float(effect_scale)
     config, data, stats, fold, model = load_run(run_dir, device, gate,
                                                 eval_overrides=overrides)
     rng = np.random.default_rng(config["eval"]["seed"])

@@ -44,7 +44,7 @@ from torch import nn
 
 from .generator import GeneratorResponse
 from .latent import LatentEncoder
-from .modulation import PerturbationModulation
+from .modulation import PerturbationModulation, rescale_effect
 from .realise import HurdleRealisation
 
 
@@ -124,6 +124,8 @@ class PathwayModulation(nn.Module):
         self.residual_coefficient = None if coefficient is None else float(coefficient)
         self.residual_power = float(config["eval"].get("residual_power", 0.0))
         self.residual_scale_max = float(config["eval"].get("residual_scale_max", 4.0))
+        # Inference only - src/config.py eval.effect_scale. 1 leaves predict() as trained.
+        self.effect_scale = float(config["eval"].get("effect_scale", 1.0))
         if self.residual_coefficient is not None:
             self.residual_scale = 1.0
 
@@ -192,8 +194,16 @@ class PathwayModulation(nn.Module):
         return phi if self.latent is None else torch.cat([phi, self.latent(x)], dim=1)
 
     def predict(self, x: torch.Tensor, perturbations: list[int]) -> torch.Tensor:
-        """Realised cells, [B, G]. soft returns mu exactly; sample draws around it."""
-        return self.head.point_estimate(self(x, perturbations))
+        """Realised cells, [B, G]. soft returns mu exactly; sample draws around it.
+
+        With eval.effect_scale s != 1 the mean is x + s (mu - x) first (rescale_effect).
+        Not for the control: it has no perturbation, and its prediction is x already.
+        """
+        params = self(x, perturbations)
+        if self.effect_scale != 1.0 and perturbations:
+            params = rescale_effect(params, x, self.effect_scale,
+                                    bool(getattr(self.modulation, "bound_mean", False)))
+        return self.head.point_estimate(params)
 
     def predict_scaled(self, x: torch.Tensor, perturbations: list[int],
                        scale: float) -> torch.Tensor:

@@ -155,10 +155,13 @@ def main() -> None:
     parser.add_argument("--late", type=int, default=100000,
                         help="scDFM's late mean starts at this iteration")
     parser.add_argument("--results-tag", default="ce0542")
+    parser.add_argument("--effect-scale", type=float, default=None,
+                        help="read our runs' rescored export (run_celleval.py --effect-scale)")
     args = parser.parse_args()
     if not args.scdfm and not args.ours:
         parser.error("give --scdfm and/or --ours")
-    folder = os.path.join(celleval_dir("sample", None, True, 128), args.results_tag)
+    folder = os.path.join(celleval_dir("sample", None, True, 128, None, None,
+                                       args.effect_scale), args.results_tag)
     for result in args.scdfm:
         scdfm_rows(result, args.late)
     for prefix in args.ours:

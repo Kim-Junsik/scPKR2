@@ -43,13 +43,14 @@ COLUMNS = [("L2", None, False), ("MSE", "mse", False), ("MAE", "mae", False),
 
 
 def score_run(run_dir: str, group: str, device: str, tag: str,
-              group_export: bool = False) -> dict[str, float]:
+              group_export: bool = False, effect: float | None = None) -> dict[str, float]:
     block = group if group_export else None
-    soft = os.path.join(celleval_dir("soft", None, True, 128, None, block), tag)
-    sample = os.path.join(celleval_dir("sample", None, True, 128, None, block), tag)
+    soft = os.path.join(celleval_dir("soft", None, True, 128, None, block, effect), tag)
+    sample = os.path.join(celleval_dir("sample", None, True, 128, None, block, effect), tag)
     soft_values = celleval_means(run_dir, "soft", group, None, True, soft) or {}
     sample_values = celleval_means(run_dir, "sample", group, None, True, sample) or {}
-    row = {"L2": compute_l2(run_dir, device, 0, "soft", 1000, group, None, "beta", True)}
+    row = {"L2": compute_l2(run_dir, device, 0, "soft", 1000, group, None, "beta", True,
+                            effect)}
     for name, key, _ in COLUMNS[1:]:
         source = sample_values if name == "DE" else soft_values
         row[name] = float(source[key]) if key in source else float("nan")
@@ -59,7 +60,10 @@ def score_run(run_dir: str, group: str, device: str, tag: str,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("arms", nargs="+", help="NAME='glob of run folders'")
+    parser.add_argument("arms", nargs="+",
+                        help="NAME='glob of run folders', or NAME:S='glob' to read those runs "
+                             "under eval.effect_scale S (run_celleval.py --effect-scale S), "
+                             "so a run and its rescaled reading sit side by side")
     parser.add_argument("--group", default="double", choices=["double", "single", "all"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--results-tag", default="ce0542")
@@ -72,18 +76,20 @@ def main() -> None:
     arms = []
     for spec in args.arms:
         name, _, pattern = spec.partition("=")
+        label, _, scale = name.partition(":")
+        effect = float(scale) if scale else None
         runs = sorted(r for r in glob.glob(pattern.strip("'\""))
                       if os.path.exists(os.path.join(r, "checkpoint.pt")))
         if not runs:
             raise SystemExit(f"{name}: no finished run matches {pattern}")
-        arms.append((name, runs))
+        arms.append((name, runs, effect))
 
     means = {}
-    for name, runs in arms:
+    for name, runs, effect in arms:
         rows = []
         for run in runs:
             row = score_run(run, args.group, args.device, args.results_tag,
-                            args.group_export)
+                            args.group_export, effect)
             missing = [c for c, v in row.items() if not np.isfinite(v)]
             if missing:
                 hint = ("  (scored with --profile minimal? rescore it with --score-only "

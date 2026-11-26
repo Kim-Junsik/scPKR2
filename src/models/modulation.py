@@ -41,6 +41,22 @@ import torch
 from torch import nn
 
 
+def rescale_effect(params: dict, x: torch.Tensor, scale: float,
+                   bound_mean: bool) -> dict:
+    """The same prediction with its change from the control cell multiplied by `scale`.
+
+    mean -> x + scale (mean - x), clipped at 0, and at the ceiling when the model bounds
+    its mean. q and the magnitude are then rebuilt the way assemble_output builds them, so
+    q still covers mean / ceiling and every gate realises a cell whose mean is the new one.
+    """
+    ceiling = params["ceiling"]
+    mean = (x + scale * (params["mean"] - x)).clamp(min=0.0)
+    if bound_mean:
+        mean = torch.minimum(mean, ceiling)
+    q = torch.maximum(params["q"], (mean / ceiling).clamp(max=1.0 - 1e-6))
+    return {**params, "mean": mean, "q": q, "magnitude": mean / q}
+
+
 def assemble_output(x: torch.Tensor, u: torch.Tensor, v: torch.Tensor,
                     logit_q: torch.Tensor, ceiling: torch.Tensor, bound_mean: bool,
                     log_scale: torch.Tensor, log_factor_max: float) -> dict:

@@ -297,7 +297,8 @@ if __name__ == "__main__":
 
 def celleval_dir(gate: str | None, variant: str | None,
                  bounded: bool = False, pred_cells: int | None = None,
-                 baseline: str | None = None, group: str | None = None) -> str:
+                 baseline: str | None = None, group: str | None = None,
+                 effect: float | None = None) -> str:
     """The export folder for one (gate, variant) reading of a checkpoint.
 
     scripts/paper_table.py imports THIS function rather than rebuilding the name,
@@ -318,6 +319,10 @@ def celleval_dir(gate: str | None, variant: str | None,
     # gets its own folder for the same reason a different gate does.
     if bounded:
         name = f"{name}_bounded"
+    # The effect scale (eval.effect_scale) changes every predicted cell, so a rescaled
+    # export is a different export of the same run. 1 is the run as trained: no suffix.
+    if effect is not None and float(effect) != 1.0:
+        name = f"{name}_e{float(effect):g}".replace(".", "p")
     # A reference prediction has no gate, so it does not carry one in its name.
     if baseline:
         name = f"celleval_baseline_{baseline}"
@@ -410,6 +415,10 @@ def main() -> None:
                              "table reports - on combosciplex the two differ by 0.157 "
                              "of L2. It goes in the folder name for the same reason the "
                              "gate does.")
+    parser.add_argument("--effect-scale", type=float, default=None, metavar="S",
+                        help="eval.effect_scale: every predicted mean becomes x + S (mu - x) "
+                             "before the gate. Chosen per table on the validation splits "
+                             "(scripts/delta_scale.py --sweep). Goes in the folder name")
     parser.add_argument("--shm-dir", default=None,
                         help="where pdex's shared matrix is kept as a file while "
                              "scoring (default: the results folder); 'dev' keeps "
@@ -431,6 +440,9 @@ def main() -> None:
     if args.bound_mean:
         calibration = dict(calibration or {})
         calibration["bound_mean"] = True
+    if args.effect_scale is not None:
+        calibration = dict(calibration or {})
+        calibration["effect_scale"] = float(args.effect_scale)
 
     # The gate AND the calibration go in the folder name. Both change the predictions
     # this export holds, so an export made under one must never overwrite an export made
@@ -438,7 +450,7 @@ def main() -> None:
     # being compared against, silently.
     out_dir = os.path.join(args.run_dir, celleval_dir(
         args.gate, args.calibration, args.bound_mean, args.pred_cells, args.baseline,
-        args.group))
+        args.group, args.effect_scale))
     export_dir = out_dir
     if args.results_tag:
         # Scores from a second cell-eval version go BESIDE the export, not over the

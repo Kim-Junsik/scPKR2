@@ -123,6 +123,14 @@ DEFAULTS: dict[str, Any] = {
         # is reliable on some conditions and anti-correlated on others, while its
         # magnitude is the same everywhere.
         "residual_scale": 1.0,
+        # The EFFECT SCALE s, applied at inference only: every predicted cell's mean becomes
+        # x + s (mu - x), clipped at 0 (and at the gene's ceiling under bound_mean), before
+        # the gate realises it. 1 is the trained model. One value per table, SELECTED ON THE
+        # VALIDATION SPLITS (scripts/delta_scale.py --sweep, then val_queue.py
+        # --effect-scale): the validation runs predict large effects at 0.6-0.8 of their
+        # size, which costs MSE and, through it, the discrimination score. Training never
+        # reads it, so a run is rescored under a new s without retraining.
+        "effect_scale": 1.0,
         # The per-condition calibration, s = clip(c ||r||^-p, 0, s_max), applied at
         # inference over the condition's own mean residual. p = 0 reduces it to a constant
         # scale and p = 1 makes the CORRECTION MAGNITUDE constant, keeping only the

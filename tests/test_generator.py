@@ -229,3 +229,59 @@ def test_a_config_without_the_key_is_still_stage_one():
     model = PathwayModulation(config, FakeObservables(), N_PERTURBATIONS)
     assert isinstance(model.modulation, PerturbationModulation)
     assert not model.has_generators
+
+
+# ------------------------------------------------------------ effect scale
+
+@pytest.mark.parametrize("perturbations", [[0], [1, 3]])
+def test_effect_scale_one_is_the_trained_model(perturbations):
+    plain = build(["model.hurdle_gate=soft"])
+    scaled = build(["model.hurdle_gate=soft", "eval.effect_scale=1.0"])
+    train_like(plain, scale=2.0)
+    scaled.load_state_dict(plain.state_dict())
+    with torch.no_grad():
+        assert torch.equal(plain.predict(control_cells(), perturbations),
+                           scaled.predict(control_cells(), perturbations))
+
+
+@pytest.mark.parametrize("perturbations", [[0], [1, 3]])
+@pytest.mark.parametrize("scale", [0.7, 1.3])
+def test_effect_scale_multiplies_the_change_from_the_control_cell(perturbations, scale):
+    plain = build(["model.hurdle_gate=soft"])
+    scaled = build(["model.hurdle_gate=soft", f"eval.effect_scale={scale}"])
+    train_like(plain, scale=2.0)
+    scaled.load_state_dict(plain.state_dict())
+    x = control_cells()
+    with torch.no_grad():
+        mu = plain(x, perturbations)["mean"]
+        expected = (x + scale * (mu - x)).clamp(min=0.0)
+        assert torch.allclose(scaled.predict(x, perturbations), expected, atol=1e-6)
+
+
+def test_effect_scale_leaves_the_control_alone():
+    plain = build(["model.hurdle_gate=soft"])
+    scaled = build(["model.hurdle_gate=soft", "eval.effect_scale=1.5"])
+    train_like(plain, scale=2.0)
+    scaled.load_state_dict(plain.state_dict())
+    with torch.no_grad():
+        assert torch.equal(plain.predict(control_cells(), []),
+                           scaled.predict(control_cells(), []))
+
+
+def test_effect_scale_keeps_the_sampled_cells_mean_on_the_new_mean():
+    """Under the sample gate q and the magnitude are rebuilt for the new mean, so draws
+    average to x + s (mu - x), not to a mixture of old and new."""
+    torch.manual_seed(1)
+    # A finite ceiling, as every real model has: without one the beta draw has no range
+    # and returns nan with or without the scale.
+    ceiling = torch.full((N_GENES,), 10.0)
+    plain = build(["model.hurdle_gate=sample"], ceiling=ceiling)
+    scaled = build(["model.hurdle_gate=sample", "eval.effect_scale=1.3"], ceiling=ceiling)
+    train_like(plain, scale=0.5)
+    scaled.load_state_dict(plain.state_dict())
+    x = control_cells()[:1].repeat(4000, 1)
+    with torch.no_grad():
+        mu = plain(x, [1, 3])["mean"][0]
+        target = (x[0] + 1.3 * (mu - x[0])).clamp(min=0.0)
+        drawn = scaled.predict(x, [1, 3]).mean(dim=0)
+    assert torch.allclose(drawn, target, rtol=0.1, atol=0.05)
