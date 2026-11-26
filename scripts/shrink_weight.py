@@ -86,9 +86,13 @@ def main() -> None:
                         help="the penalty's share of the per-step loss at those runs")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
+    # A run's config names its cache and knowledge files relative to the repository
+    # (assets/val_t3v0.h5ad), so read them from there whatever the shell's directory.
+    runs = [os.path.abspath(run) for run in args.runs]
+    os.chdir(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
     weights = []
-    for run in args.runs:
+    for run in runs:
         loss, penalty, details = measure(run, args.device)
         weight = args.share * loss / penalty
         weights.append(weight)
