@@ -110,7 +110,7 @@ def main() -> None:
     print(header + "   better")
     print("-" * (len(header) + 9))
     reference = means[arms[0][0]][0]
-    for name, _ in arms:
+    for name, _, _ in arms:
         values, count, per_run = means[name]
         print(f"{name:8s} {count:4d} " + cells(values))
         if name != arms[0][0]:
