@@ -227,6 +227,7 @@ def sweep(groups: list[list[tuple[dict, float]]], theirs: list[dict], prefix: st
 
 
 def main() -> None:
+    global KEEP_TARGET, GRID_A, GRID_B
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("families", nargs="+", choices=list(BLOCKS))
@@ -240,9 +241,15 @@ def main() -> None:
                         help="DS without cell-eval's target-gene exclusion. It drops a gene "
                              "named like the label: our single 'BAK1' loses gene BAK1, "
                              "scDFM's 'BAK1+control' matches no gene and keeps it")
+    parser.add_argument("--a", nargs="+", type=float, default=None,
+                        help=f"the sweep's a values (default {GRID_A})")
+    parser.add_argument("--b", nargs="+", type=float, default=None,
+                        help=f"the sweep's b values (default {GRID_B}); --b 0 is one "
+                             "shared factor, the form eval.effect_scale implements")
     args = parser.parse_args()
-    global KEEP_TARGET
     KEEP_TARGET = args.keep_target
+    GRID_A = args.a or GRID_A
+    GRID_B = args.b or GRID_B
 
     groups, theirs = [], []
     for family in args.families:

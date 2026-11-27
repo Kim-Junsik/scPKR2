@@ -215,6 +215,9 @@ def compare_lines(name: str, jobs: list[dict]) -> list[str]:
                 effect = job["effect"]
         if not arms:
             continue
+        # The final model first: arm_table.py takes the first arm as the reference that
+        # every other arm's diff row is measured from (the jobs are sorted by arm name).
+        arms.sort(key=lambda arm: arm != "base")
         # Under --effect-scale every arm is shown as trained and rescaled, side by side.
         labels = [(arm, "") for arm in arms] + (
             [(arm, f":{effect:g}") for arm in arms] if effect else [])
